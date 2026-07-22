@@ -1,8 +1,262 @@
-/*
+.office-flow-task-actions {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	min-width: 54px;
+	margin-inline: 7px 3px;
+	padding: 3px 5px;
+	vertical-align: 1px;
+	border: 1px solid color-mix(in srgb, #ff9bc7 54%, var(--background-modifier-border));
+	border-radius: 999px;
+	background: color-mix(in srgb, #fff0f7 68%, var(--background-primary) 32%);
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, #ffffff 58%, transparent),
+		0 1px 2px color-mix(in srgb, #ff8fbd 12%, transparent),
+		0 5px 14px color-mix(in srgb, var(--background-modifier-box-shadow) 10%, transparent);
+	backdrop-filter: blur(12px) saturate(1.16);
+	-webkit-backdrop-filter: blur(12px) saturate(1.16);
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.office-flow-task-action-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--background-primary) 48%, transparent);
+	color: color-mix(in srgb, var(--text-muted) 78%, #d94b87 22%);
+	font: inherit;
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1;
+	letter-spacing: -0.02em;
+	cursor: pointer;
+	transition:
+		background-color 120ms ease,
+		color 120ms ease,
+		transform 120ms ease,
+		box-shadow 120ms ease;
+}
 
-If your plugin does not need CSS, delete this file.
+.office-flow-task-action-button:hover {
+	background: color-mix(in srgb, #ffffff 64%, #ffd6e8 36%);
+	color: color-mix(in srgb, var(--text-normal) 68%, #cf3f7c 32%);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, #ff9bc7 32%, transparent);
+}
 
-*/
+.office-flow-task-action-button:active {
+	transform: scale(0.92);
+	background: color-mix(in srgb, #ffc2dc 48%, #ffffff 52%);
+	color: var(--text-normal);
+	transition-duration: 60ms;
+}
+
+.office-flow-task-action-button:focus-visible {
+	outline: 2px solid color-mix(in srgb, #ff7eb6 78%, var(--interactive-accent));
+	outline-offset: 1px;
+}
+
+.office-flow-task-action-pen {
+	color: color-mix(in srgb, #d94b87 70%, var(--text-muted) 30%);
+	font-size: 14px;
+	font-weight: 700;
+}
+
+.office-flow-task-action-pen:hover {
+	color: color-mix(in srgb, #c93e79 72%, var(--text-normal) 28%);
+}
+
+.office-flow-task-category-picker {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+}
+
+.office-flow-task-category-trigger {
+	background: color-mix(in srgb, #fff7fb 78%, var(--background-primary) 22%);
+	box-shadow:
+		inset 0 0 0 1px color-mix(in srgb, #f5b7d0 42%, transparent),
+		0 1px 3px color-mix(in srgb, #ffb8d5 12%, transparent);
+}
+
+.office-flow-task-category-trigger:hover {
+	background: color-mix(in srgb, #fff0f7 72%, var(--background-primary) 28%);
+	box-shadow:
+		inset 0 0 0 1px color-mix(in srgb, #f0a5c4 54%, transparent),
+		0 1px 5px color-mix(in srgb, #ffb8d5 16%, transparent);
+}
+
+.office-flow-task-category-icon {
+	width: 8px;
+	height: 8px;
+	border: 1.5px solid color-mix(in srgb, #d94b87 54%, var(--text-muted) 46%);
+	border-radius: 2px;
+	background: transparent;
+}
+
+.office-flow-task-category-options {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	max-width: 0;
+	overflow: hidden;
+	opacity: 0;
+	transform: translateX(-3px) scale(0.96);
+	transform-origin: left center;
+	pointer-events: none;
+	transition:
+		max-width 160ms ease,
+		opacity 120ms ease,
+		transform 160ms ease;
+}
+
+.office-flow-task-category-picker:hover .office-flow-task-category-options,
+.office-flow-task-category-picker:focus-within .office-flow-task-category-options {
+	max-width: 160px;
+	opacity: 1;
+	transform: translateX(0) scale(1);
+	pointer-events: auto;
+}
+
+.office-flow-task-category-option {
+	width: auto;
+	min-width: 32px;
+	padding: 0 7px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0;
+}
+
+.office-flow-task-category-option-1 {
+	background: color-mix(in srgb, #ffe4c7 62%, var(--background-primary) 38%);
+	color: color-mix(in srgb, var(--text-normal) 70%, #b66a24 30%);
+}
+
+.office-flow-task-category-option-2 {
+	background: color-mix(in srgb, #e8ddff 62%, var(--background-primary) 38%);
+	color: color-mix(in srgb, var(--text-normal) 70%, #7458c8 30%);
+}
+
+.office-flow-task-category-option-3 {
+	background: color-mix(in srgb, #ffd9eb 64%, var(--background-primary) 36%);
+	color: color-mix(in srgb, var(--text-normal) 70%, #c84f89 30%);
+}
+
+.office-flow-task-category-option-4 {
+	background: color-mix(in srgb, #dff6ec 62%, var(--background-primary) 38%);
+	color: color-mix(in srgb, var(--text-normal) 70%, #308466 30%);
+}
+
+.office-flow-home-action {
+	color: var(--text-muted);
+}
+
+.office-flow-home-action:hover {
+	color: var(--text-normal);
+}
+
+.office-flow-progress {
+	display: grid;
+	gap: 10px;
+	margin: 12px 0;
+}
+
+.office-flow-progress-card {
+	padding: 12px 14px;
+	border: 1px solid color-mix(in srgb, #ff9bc7 42%, var(--background-modifier-border));
+	border-radius: 16px;
+	background: linear-gradient(
+		135deg,
+		color-mix(in srgb, #fff0f7 70%, var(--background-primary) 30%),
+		color-mix(in srgb, #ffffff 76%, var(--background-primary) 24%)
+	);
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, #ffffff 64%, transparent),
+		0 8px 24px color-mix(in srgb, var(--background-modifier-box-shadow) 10%, transparent);
+}
+
+.office-flow-progress-card-header {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 4px;
+}
+
+.office-flow-progress-title {
+	color: var(--text-normal);
+	font-size: 14px;
+	font-weight: 650;
+	letter-spacing: -0.01em;
+}
+
+.office-flow-progress-note-link {
+	min-width: 56px;
+	margin: 0 3px 0 0;
+	padding: 3px 10px;
+	border: 1px solid color-mix(in srgb, #ff9bc7 38%, var(--background-modifier-border));
+	border-radius: 10px;
+	background: color-mix(in srgb, #ffe8f3 68%, var(--background-primary) 32%);
+	color: color-mix(in srgb, var(--text-normal) 70%, #cf3f7c 30%);
+	font: inherit;
+	font-weight: inherit;
+	letter-spacing: inherit;
+	line-height: 1.2;
+	cursor: pointer;
+	box-shadow:
+		inset 0 1px 0 color-mix(in srgb, #ffffff 52%, transparent),
+		0 1px 4px color-mix(in srgb, #ff8fbd 12%, transparent);
+}
+
+.office-flow-progress-note-link:hover {
+	background: color-mix(in srgb, #ffd6e8 70%, var(--background-primary) 30%);
+	color: color-mix(in srgb, var(--text-normal) 58%, #cf3f7c 42%);
+	text-decoration: none;
+}
+
+.office-flow-progress-percent {
+	color: color-mix(in srgb, var(--text-normal) 72%, #cf3f7c 28%);
+	font-size: 13px;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+
+.office-flow-progress-meta {
+	margin-bottom: 9px;
+	color: var(--text-muted);
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.office-flow-progress-track {
+	height: 10px;
+	overflow: hidden;
+	border-radius: 999px;
+	background: color-mix(in srgb, #ffd6e8 42%, var(--background-modifier-border) 58%);
+	box-shadow: inset 0 1px 2px color-mix(in srgb, var(--background-modifier-box-shadow) 16%, transparent);
+}
+
+.office-flow-progress-fill {
+	height: 100%;
+	border-radius: inherit;
+	background: linear-gradient(90deg, #ff8fbd, #d94b87);
+	box-shadow: 0 0 10px color-mix(in srgb, #ff8fbd 28%, transparent);
+	transition: width 180ms ease;
+}
+
+.office-flow-progress-card-empty .office-flow-progress-fill {
+	background: transparent;
+	box-shadow: none;
+}
+
+.office-flow-progress-empty-message {
+	padding: 10px 12px;
+	border: 1px dashed color-mix(in srgb, #ff9bc7 42%, var(--background-modifier-border));
+	border-radius: 12px;
+	background: color-mix(in srgb, #fff0f7 44%, var(--background-primary) 56%);
+	color: var(--text-muted);
+	font-size: 13px;
+}
