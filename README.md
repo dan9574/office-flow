@@ -33,7 +33,7 @@ The progress counter counts leaf tasks: parent tasks with child tasks do not cou
 
 ## Installation
 
-1. Download the latest release package from the [Releases]([#](https://github.com/dan9574/office-flow/releases/tag/v1_0_1)) page.
+1. Download the latest release package from the [Releases](https://github.com/dan9574/office-flow/releases/tag/v1_0_1) page.
 2. Extract the downloaded `.zip` file.
 3. Open **Settings** in Obsidian.
 4. Navigate to **Community plugins** -> **Installed plugins**, and click the **Open plugins folder** icon (folder icon).
@@ -44,7 +44,7 @@ The progress counter counts leaf tasks: parent tasks with child tasks do not cou
 
 ## 安装指南
 
-1. 从 [Releases]([#](https://github.com/dan9574/office-flow/releases/tag/v1_0_1)) 页面下载最新的安装包。
+1. 从 [Releases](https://github.com/dan9574/office-flow/releases/tag/v1_0_1) 页面下载最新的安装包。
 2. 解压缩下载的安装包。
 3. 打开 Obsidian **设置**。
 4. 找到 **第三方插件** -> **已安装插件**，点击 **打开插件文件夹** 图标。
