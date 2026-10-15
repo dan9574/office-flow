@@ -35,7 +35,8 @@ const DEFAULT_CATEGORIES = ['操作', '研究', '设计', '代码'] as const;
 const CATEGORY_COUNT = 4;
 const PINK_SIDEBAR_STYLE_ID = 'office-flow-pink-sidebar-style';
 const DEFAULT_ARCHIVE_FOLDER = 'archive/todo';
-const DEFAULT_ARCHIVE_FILE_NAME_FORMAT = 'YYYY_MM_DD_temp_todo';
+const DEFAULT_ARCHIVE_DATE_FORMAT = 'YYYY_MM_DD';
+const DEFAULT_ARCHIVE_FILE_SUFFIX = 'temp_todo';
 const ARCHIVE_HOLD_MS = 2000;
 const ARCHIVE_ARM_TIMEOUT_MS = 5000;
 const OFFICE_PROGRESS_FENCE_LINE = /^\s*(?:```+|~~~+)\s*office-progress\s*$/i;
@@ -49,8 +50,10 @@ interface OfficeFlowSettings {
 	enableOfficeProgressBlocks: boolean;
 	enablePinkSidebar: boolean;
 	categories: string[];
+	favoriteNote: string;
 	archiveFolder: string;
-	archiveFileNameFormat: string;
+	archiveDateFormat: string;
+	archiveFileSuffix: string;
 }
 
 const DEFAULT_SETTINGS: OfficeFlowSettings = {
@@ -61,9 +64,16 @@ const DEFAULT_SETTINGS: OfficeFlowSettings = {
 	enableOfficeProgressBlocks: true,
 	enablePinkSidebar: true,
 	categories: [...DEFAULT_CATEGORIES],
+	favoriteNote: '',
 	archiveFolder: DEFAULT_ARCHIVE_FOLDER,
-	archiveFileNameFormat: DEFAULT_ARCHIVE_FILE_NAME_FORMAT,
+	archiveDateFormat: DEFAULT_ARCHIVE_DATE_FORMAT,
+	archiveFileSuffix: DEFAULT_ARCHIVE_FILE_SUFFIX,
 };
+
+interface OfficeFlowViewActions {
+	officeFlowHomeActionEl?: HTMLElement;
+	officeFlowFavoriteActionEl?: HTMLElement;
+}
 
 export default class OfficeFlowPlugin extends Plugin {
 	settings!: OfficeFlowSettings;
@@ -125,6 +135,14 @@ export default class OfficeFlowPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: 'open-favorite-note',
+			name: 'Open favorite note',
+			callback: () => {
+				void this.openFavoriteNote();
+			},
+		});
+
 		this.registerMarkdownCodeBlockProcessor('office-progress', (source, el, ctx) => {
 			if (!this.settings.enableOfficeProgressBlocks) {
 				el.empty();
@@ -161,10 +179,12 @@ export default class OfficeFlowPlugin extends Plugin {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
 		this.settings.homeNote = normalizeHomeNote(this.settings.homeNote);
 		this.settings.categories = normalizeCategories(this.settings.categories);
+		this.settings.favoriteNote = normalizeHomeNote(this.settings.favoriteNote ?? '');
 		this.settings.archiveFolder = normalizeFolderPath(this.settings.archiveFolder);
-		this.settings.archiveFileNameFormat = normalizeFileNameFormat(
-			this.settings.archiveFileNameFormat,
-		);
+		this.settings.archiveDateFormat = normalizeDateFormat(this.settings.archiveDateFormat);
+		this.settings.archiveFileSuffix = normalizeFileSuffix(this.settings.archiveFileSuffix);
+		// Dropped in 1.1.1: the single format string mangled literal text like "temp_todo".
+		delete (this.settings as unknown as Record<string, unknown>)['archiveFileNameFormat'];
 	}
 
 	async saveSettings(): Promise<void> {
@@ -256,6 +276,35 @@ export default class OfficeFlowPlugin extends Plugin {
 		await this.app.workspace.openLinkText(homeNote, '', false);
 	}
 
+	async openFavoriteNote(): Promise<void> {
+		const favoriteNote = normalizeHomeNote(this.settings.favoriteNote);
+
+		if (!favoriteNote) {
+			new Notice('Right-click the heart to set the current note as favorite.');
+			return;
+		}
+
+		const favoriteFile = this.app.metadataCache.getFirstLinkpathDest(favoriteNote, '');
+
+		if (!favoriteFile) {
+			new Notice(`Favorite note not found: ${favoriteNote}`);
+			return;
+		}
+
+		await this.app.workspace.openLinkText(favoriteNote, '', false);
+	}
+
+	async setFavoriteNote(file: TFile | null): Promise<void> {
+		if (!file) {
+			new Notice('Open a note first, then right-click the heart.');
+			return;
+		}
+
+		this.settings.favoriteNote = file.path.replace(/\.md$/i, '');
+		await this.saveSettings();
+		new Notice(`Favorite note: ${this.settings.favoriteNote}`);
+	}
+
 	private addHomeActionToActiveMarkdownView(): void {
 		if (!this.settings.enableHomeButton) {
 			return;
@@ -268,19 +317,42 @@ export default class OfficeFlowPlugin extends Plugin {
 			return;
 		}
 
-		const viewWithHomeAction = view as MarkdownView & {
-			officeFlowHomeActionEl?: HTMLElement;
-		};
+		const viewWithActions = view as MarkdownView & OfficeFlowViewActions;
 
-		if (viewWithHomeAction.officeFlowHomeActionEl?.isConnected) {
+		if (
+			viewWithActions.officeFlowHomeActionEl?.isConnected &&
+			viewWithActions.officeFlowFavoriteActionEl?.isConnected
+		) {
 			return;
 		}
 
-		const actionEl = view.addAction('home', 'Open Home note', () => {
+		viewWithActions.officeFlowHomeActionEl?.remove();
+		viewWithActions.officeFlowFavoriteActionEl?.remove();
+
+		const homeEl = view.addAction('home', 'Open Home note', () => {
 			void this.openHomeNote();
 		});
-		actionEl.addClass('office-flow-home-action');
-		viewWithHomeAction.officeFlowHomeActionEl = actionEl;
+		homeEl.addClass('office-flow-home-action');
+
+		const favoriteEl = view.addAction(
+			'heart',
+			'Open favorite note (right-click: set current note as favorite)',
+			() => {
+				void this.openFavoriteNote();
+			},
+		);
+		favoriteEl.addClass('office-flow-home-action', 'office-flow-favorite-action');
+		favoriteEl.addEventListener('contextmenu', (event) => {
+			event.preventDefault();
+			event.stopPropagation();
+			void this.setFavoriteNote(view.file);
+		});
+
+		// Keep the heart immediately left of Home whatever order addAction uses.
+		homeEl.insertAdjacentElement('beforebegin', favoriteEl);
+
+		viewWithActions.officeFlowHomeActionEl = homeEl;
+		viewWithActions.officeFlowFavoriteActionEl = favoriteEl;
 	}
 
 	private removeHomeActions(): void {
@@ -291,12 +363,12 @@ export default class OfficeFlowPlugin extends Plugin {
 				return;
 			}
 
-			const viewWithHomeAction = view as MarkdownView & {
-				officeFlowHomeActionEl?: HTMLElement;
-			};
+			const viewWithActions = view as MarkdownView & OfficeFlowViewActions;
 
-			viewWithHomeAction.officeFlowHomeActionEl?.remove();
-			viewWithHomeAction.officeFlowHomeActionEl = undefined;
+			viewWithActions.officeFlowHomeActionEl?.remove();
+			viewWithActions.officeFlowHomeActionEl = undefined;
+			viewWithActions.officeFlowFavoriteActionEl?.remove();
+			viewWithActions.officeFlowFavoriteActionEl = undefined;
 		});
 	}
 
@@ -396,6 +468,21 @@ class OfficeFlowSettingTab extends PluginSettingTab {
 					}),
 			);
 
+		new Setting(containerEl)
+			.setName('Favorite note')
+			.setDesc(
+				'Opened by the heart action next to Home. Right-clicking the heart sets the current note here.',
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder('study/Everyday_Task')
+					.setValue(this.plugin.settings.favoriteNote)
+					.onChange(async (value) => {
+						this.plugin.settings.favoriteNote = normalizeHomeNote(value);
+						await this.plugin.saveSettings();
+					}),
+			);
+
 		new Setting(containerEl).setName('Archive').setHeading();
 
 		new Setting(containerEl)
@@ -414,16 +501,29 @@ class OfficeFlowSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName('Archive file name')
+			.setName('Archive date format')
+			.setDesc('Moment.js date format that starts the daily archive file name, for example YYYY_MM_DD.')
+			.addText((text) =>
+				text
+					.setPlaceholder(DEFAULT_ARCHIVE_DATE_FORMAT)
+					.setValue(this.plugin.settings.archiveDateFormat)
+					.onChange(async (value) => {
+						this.plugin.settings.archiveDateFormat = normalizeDateFormat(value);
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Archive file name suffix')
 			.setDesc(
-				'Moment.js date format for the daily archive file, without .md. For example YYYY_MM_DD_temp_todo.',
+				'Plain text added after the date with an underscore: temp_todo gives 2026_10_15_temp_todo.md. Leave empty for the date only.',
 			)
 			.addText((text) =>
 				text
-					.setPlaceholder(DEFAULT_ARCHIVE_FILE_NAME_FORMAT)
-					.setValue(this.plugin.settings.archiveFileNameFormat)
+					.setPlaceholder(DEFAULT_ARCHIVE_FILE_SUFFIX)
+					.setValue(this.plugin.settings.archiveFileSuffix)
 					.onChange(async (value) => {
-						this.plugin.settings.archiveFileNameFormat = normalizeFileNameFormat(value);
+						this.plugin.settings.archiveFileSuffix = normalizeFileSuffix(value);
 						await this.plugin.saveSettings();
 					}),
 			);
@@ -459,9 +559,14 @@ function normalizeFolderPath(value: unknown): string {
 	return trimmed ? normalizePath(trimmed) : DEFAULT_ARCHIVE_FOLDER;
 }
 
-function normalizeFileNameFormat(value: unknown): string {
+function normalizeDateFormat(value: unknown): string {
 	const trimmed = typeof value === 'string' ? value.trim() : '';
-	return trimmed || DEFAULT_ARCHIVE_FILE_NAME_FORMAT;
+	return trimmed || DEFAULT_ARCHIVE_DATE_FORMAT;
+}
+
+/** Literal text only: strip path separators and characters Windows rejects in file names. */
+function normalizeFileSuffix(value: unknown): string {
+	return typeof value === 'string' ? value.trim().replace(/[\\/:*?"<>|]/g, '') : '';
 }
 
 function normalizeCategories(value: unknown): string[] {
@@ -1621,7 +1726,7 @@ async function archiveSection(
 
 	const folder = plugin.settings.archiveFolder || DEFAULT_ARCHIVE_FOLDER;
 	const stamp = moment();
-	const fileName = stamp.format(plugin.settings.archiveFileNameFormat || DEFAULT_ARCHIVE_FILE_NAME_FORMAT);
+	const fileName = buildArchiveFileName(plugin.settings, stamp);
 	const targetPath = normalizePath(`${folder}/${fileName}.md`);
 	const targetFile = await getOrCreateMarkdownFile(app, targetPath);
 	const sourceLink = sourceFile.path.replace(/\.md$/i, '');
@@ -1795,6 +1900,13 @@ function splitSectionBody(lines: string[], range: HeadingRange): SectionBody {
 	}
 
 	return { kept, content: trimBlankLines(content) };
+}
+
+/** Only the date part goes through moment; the suffix is literal text. */
+function buildArchiveFileName(settings: OfficeFlowSettings, stamp: moment.Moment): string {
+	const datePart = stamp.format(settings.archiveDateFormat || DEFAULT_ARCHIVE_DATE_FORMAT);
+	const suffix = normalizeFileSuffix(settings.archiveFileSuffix);
+	return suffix ? `${datePart}_${suffix}` : datePart;
 }
 
 function pickArchiveHeadingName(

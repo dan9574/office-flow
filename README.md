@@ -7,6 +7,7 @@ Office Flow is a small personal Obsidian plugin for faster task notes and a soft
 - **Task edit mode**: inline buttons for quickly adding child tasks, pen notes, and top-level tasks.
 - **Task categories**: category picker for empty tasks, with four configurable labels.
 - **Home button**: a lightweight top-right action that opens your configured Home note.
+- **Favorite button**: a heart next to Home. Click opens the favorite note; right-click sets the current note as the favorite.
 - **Office progress blocks**: render progress cards from short `office-progress` code blocks.
 - **Pink sidebar**: optional soft pink sidebar and ribbon styling.
 
@@ -39,7 +40,7 @@ On a card for a section of the current note, the percent badge is also the archi
 2. Short-press the icon to go back to the percent.
 3. Press and hold for 2 s: a ring fills, then everything under the heading (tasks, child tasks, pen notes, other blocks) moves to today's archive file. The heading and its `office-progress` block stay in place.
 
-Archived sections land in `archive/todo/YYYY_MM_DD_temp_todo.md` (folder and file name are settings). Each one is written as:
+Archived sections land in `archive/todo/2026_10_15_temp_todo.md`: the folder, the date format (`YYYY_MM_DD`, Moment.js tokens) and the literal suffix (`temp_todo`) are settings. Each one is written as:
 
 ````md
 ## 15:32 临时任务
