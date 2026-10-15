@@ -17,6 +17,11 @@ import {
 	PluginSettingTab,
 	Setting,
 	TFile,
+	TFolder,
+	getIcon,
+	moment,
+	normalizePath,
+	setIcon,
 } from 'obsidian';
 
 const UNFINISHED_TASK_LINE = /^(\t?)- \[ \]/;
@@ -29,6 +34,12 @@ const INSERTED_NOTE_LINE = '\t🖊';
 const DEFAULT_CATEGORIES = ['操作', '研究', '设计', '代码'] as const;
 const CATEGORY_COUNT = 4;
 const PINK_SIDEBAR_STYLE_ID = 'office-flow-pink-sidebar-style';
+const DEFAULT_ARCHIVE_FOLDER = 'archive/todo';
+const DEFAULT_ARCHIVE_FILE_NAME_FORMAT = 'YYYY_MM_DD_temp_todo';
+const ARCHIVE_HOLD_MS = 2000;
+const ARCHIVE_ARM_TIMEOUT_MS = 5000;
+const OFFICE_PROGRESS_FENCE_LINE = /^\s*(?:```+|~~~+)\s*office-progress\s*$/i;
+const RESTORE_TARGET_LINE = /^restore\s*:\s*(.+)$/i;
 
 interface OfficeFlowSettings {
 	homeNote: string;
@@ -38,6 +49,8 @@ interface OfficeFlowSettings {
 	enableOfficeProgressBlocks: boolean;
 	enablePinkSidebar: boolean;
 	categories: string[];
+	archiveFolder: string;
+	archiveFileNameFormat: string;
 }
 
 const DEFAULT_SETTINGS: OfficeFlowSettings = {
@@ -48,6 +61,8 @@ const DEFAULT_SETTINGS: OfficeFlowSettings = {
 	enableOfficeProgressBlocks: true,
 	enablePinkSidebar: true,
 	categories: [...DEFAULT_CATEGORIES],
+	archiveFolder: DEFAULT_ARCHIVE_FOLDER,
+	archiveFileNameFormat: DEFAULT_ARCHIVE_FILE_NAME_FORMAT,
 };
 
 export default class OfficeFlowPlugin extends Plugin {
@@ -116,7 +131,7 @@ export default class OfficeFlowPlugin extends Plugin {
 				return;
 			}
 
-			void renderOfficeProgressBlock(this.app, source, el, ctx.sourcePath);
+			void renderOfficeProgressBlock(this, source, el, ctx.sourcePath);
 		});
 
 		this.registerEvent(
@@ -146,6 +161,10 @@ export default class OfficeFlowPlugin extends Plugin {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
 		this.settings.homeNote = normalizeHomeNote(this.settings.homeNote);
 		this.settings.categories = normalizeCategories(this.settings.categories);
+		this.settings.archiveFolder = normalizeFolderPath(this.settings.archiveFolder);
+		this.settings.archiveFileNameFormat = normalizeFileNameFormat(
+			this.settings.archiveFileNameFormat,
+		);
 	}
 
 	async saveSettings(): Promise<void> {
@@ -377,6 +396,38 @@ class OfficeFlowSettingTab extends PluginSettingTab {
 					}),
 			);
 
+		new Setting(containerEl).setName('Archive').setHeading();
+
+		new Setting(containerEl)
+			.setName('Archive folder')
+			.setDesc(
+				'Folder that receives archived sections. Progress cards inside this folder show a restore button instead of an archive button.',
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder(DEFAULT_ARCHIVE_FOLDER)
+					.setValue(this.plugin.settings.archiveFolder)
+					.onChange(async (value) => {
+						this.plugin.settings.archiveFolder = normalizeFolderPath(value);
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Archive file name')
+			.setDesc(
+				'Moment.js date format for the daily archive file, without .md. For example YYYY_MM_DD_temp_todo.',
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder(DEFAULT_ARCHIVE_FILE_NAME_FORMAT)
+					.setValue(this.plugin.settings.archiveFileNameFormat)
+					.onChange(async (value) => {
+						this.plugin.settings.archiveFileNameFormat = normalizeFileNameFormat(value);
+						await this.plugin.saveSettings();
+					}),
+			);
+
 		new Setting(containerEl).setName('Task categories').setHeading();
 
 		const categories = this.plugin.getTaskCategories();
@@ -401,6 +452,16 @@ class OfficeFlowSettingTab extends PluginSettingTab {
 
 function normalizeHomeNote(value: string): string {
 	return value.trim().replace(/^\[\[/, '').replace(/\]\]$/, '').split('|')[0]?.trim() ?? '';
+}
+
+function normalizeFolderPath(value: unknown): string {
+	const trimmed = typeof value === 'string' ? value.trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '') : '';
+	return trimmed ? normalizePath(trimmed) : DEFAULT_ARCHIVE_FOLDER;
+}
+
+function normalizeFileNameFormat(value: unknown): string {
+	const trimmed = typeof value === 'string' ? value.trim() : '';
+	return trimmed || DEFAULT_ARCHIVE_FILE_NAME_FORMAT;
 }
 
 function normalizeCategories(value: unknown): string[] {
@@ -843,14 +904,42 @@ interface ProgressCardData extends ProgressCounts {
 	percent: number;
 	found: boolean;
 	sourceFound: boolean;
+	hasContent: boolean;
 }
 
+interface SectionBody {
+	/** Lines that stay in place: the office-progress code block(s) of the section. */
+	kept: string[];
+	/** Everything else under the heading, trimmed of surrounding blank lines. */
+	content: string[];
+}
+
+interface ProgressBlockContext {
+	plugin: OfficeFlowPlugin;
+	source: string;
+	containerEl: HTMLElement;
+	sourcePath: string;
+	restoreTarget: ProgressTarget | null;
+}
+
+type ProgressActionKind = 'archive' | 'restore';
+
+interface ProgressAction {
+	kind: ProgressActionKind;
+	run: () => Promise<string>;
+}
+
+type ProgressBadgeState = 'percent' | 'armed' | 'holding' | 'busy';
+
+class OfficeFlowActionError extends Error {}
+
 async function renderOfficeProgressBlock(
-	app: App,
+	plugin: OfficeFlowPlugin,
 	source: string,
 	containerEl: HTMLElement,
 	sourcePath: string,
 ): Promise<void> {
+	const app = plugin.app;
 	containerEl.empty();
 
 	const targets = parseProgressTargets(source);
@@ -880,7 +969,10 @@ async function renderOfficeProgressBlock(
 		cards.push(calculateProgressCard(target, markdown, markdown !== null));
 	}
 
-	renderProgressCards(app, containerEl, cards, sourcePath);
+	renderProgressCards(
+		{ plugin, source, containerEl, sourcePath, restoreTarget: parseRestoreTarget(source) },
+		cards,
+	);
 }
 
 async function readProgressTargetMarkdown(
@@ -907,6 +999,10 @@ function parseProgressTargets(source: string): ProgressTarget[] {
 	const targets: ProgressTarget[] = [];
 
 	for (const line of source.split(/\r?\n/)) {
+		if (RESTORE_TARGET_LINE.test(line.trim())) {
+			continue;
+		}
+
 		const target = parseProgressTarget(line);
 
 		if (!target) {
@@ -924,6 +1020,21 @@ function parseProgressTargets(source: string): ProgressTarget[] {
 	}
 
 	return targets;
+}
+
+function parseRestoreTarget(source: string): ProgressTarget | null {
+	for (const line of source.split(/\r?\n/)) {
+		const match = RESTORE_TARGET_LINE.exec(line.trim());
+
+		if (!match) {
+			continue;
+		}
+
+		const target = parseProgressTarget(match[1] ?? '');
+		return target && target.noteName !== null ? target : null;
+	}
+
+	return null;
 }
 
 function parseProgressTarget(line: string): ProgressTarget | null {
@@ -1005,6 +1116,7 @@ function calculateProgressCard(
 			percent: 0,
 			found: false,
 			sourceFound,
+			hasContent: false,
 		};
 	}
 
@@ -1024,6 +1136,7 @@ function calculateProgressCard(
 		percent,
 		found: ranges.length > 0,
 		sourceFound,
+		hasContent: ranges.some((range) => splitSectionBody(lines, range).content.length > 0),
 	};
 }
 
@@ -1205,12 +1318,9 @@ function isFenceLine(line: string): boolean {
 	return /^\s*(```+|~~~+)/.test(line);
 }
 
-function renderProgressCards(
-	app: App,
-	containerEl: HTMLElement,
-	cards: ProgressCardData[],
-	sourcePath: string,
-): void {
+function renderProgressCards(context: ProgressBlockContext, cards: ProgressCardData[]): void {
+	const { plugin, containerEl, sourcePath } = context;
+	const app = plugin.app;
 	const wrapper = containerEl.createDiv({ cls: 'office-flow-progress' });
 
 	for (const card of cards) {
@@ -1220,7 +1330,7 @@ function renderProgressCards(
 		const headerEl = cardEl.createDiv({ cls: 'office-flow-progress-card-header' });
 		const titleEl = headerEl.createDiv({ cls: 'office-flow-progress-title' });
 		renderProgressTitle(app, titleEl, card, sourcePath);
-		headerEl.createDiv({ cls: 'office-flow-progress-percent', text: `${card.percent}%` });
+		renderProgressBadge(context, headerEl, card, resolveProgressAction(context, card));
 
 		const metaText = !card.sourceFound
 			? 'Note not found'
@@ -1271,4 +1381,509 @@ function renderProgressMessage(containerEl: HTMLElement, message: string): void 
 		cls: 'office-flow-progress-empty-message',
 		text: message,
 	});
+}
+
+// ---------- Archive / restore ----------
+
+function resolveProgressAction(
+	context: ProgressBlockContext,
+	card: ProgressCardData,
+): ProgressAction | null {
+	if (card.noteName !== null || !card.found || !card.hasContent) {
+		return null;
+	}
+
+	const { plugin, sourcePath, restoreTarget } = context;
+
+	if (isPathInFolder(sourcePath, plugin.settings.archiveFolder)) {
+		if (!restoreTarget) {
+			return null;
+		}
+
+		return {
+			kind: 'restore',
+			run: () => restoreSection(plugin, sourcePath, card.targetSectionName, restoreTarget),
+		};
+	}
+
+	return {
+		kind: 'archive',
+		run: () => archiveSection(plugin, sourcePath, card.targetSectionName),
+	};
+}
+
+function isPathInFolder(path: string, folder: string): boolean {
+	if (!folder) {
+		return false;
+	}
+
+	return path.toLowerCase().startsWith(`${folder.toLowerCase()}/`);
+}
+
+function resolveActionIcon(kind: ProgressActionKind): string {
+	if (kind === 'archive') {
+		return 'archive';
+	}
+
+	return getIcon('archive-restore') ? 'archive-restore' : 'undo-2';
+}
+
+/**
+ * The percent badge doubles as the archive / restore control:
+ * percent --click--> armed (icon) --short press--> percent
+ *                    armed --hold 2s (ring fills)--> busy --> action runs --> card re-renders
+ */
+function renderProgressBadge(
+	context: ProgressBlockContext,
+	headerEl: HTMLElement,
+	card: ProgressCardData,
+	action: ProgressAction | null,
+): void {
+	const percentText = `${card.percent}%`;
+
+	if (!action) {
+		headerEl.createDiv({ cls: 'office-flow-progress-percent', text: percentText });
+		return;
+	}
+
+	const actionLabel = action.kind === 'archive' ? 'Archive section' : 'Restore section';
+	const badge = headerEl.createEl('button', {
+		cls: `office-flow-progress-percent office-flow-progress-badge office-flow-progress-badge-${action.kind}`,
+		attr: {
+			'aria-label': `${actionLabel}: click, then hold for ${ARCHIVE_HOLD_MS / 1000}s`,
+			title: `${actionLabel}: click, then hold for ${ARCHIVE_HOLD_MS / 1000}s`,
+		},
+	});
+	badge.type = 'button';
+	badge.style.setProperty('--office-flow-hold-duration', `${ARCHIVE_HOLD_MS}ms`);
+
+	const ring = badge.createSvg('svg', {
+		cls: 'office-flow-progress-ring',
+		attr: { viewBox: '0 0 36 36', 'aria-hidden': 'true' },
+	});
+	ring.createSvg('circle', {
+		cls: 'office-flow-progress-ring-track',
+		attr: { cx: '18', cy: '18', r: '15.5' },
+	});
+	ring.createSvg('circle', {
+		cls: 'office-flow-progress-ring-fill',
+		attr: { cx: '18', cy: '18', r: '15.5' },
+	});
+	badge.createSpan({ cls: 'office-flow-progress-badge-label', text: percentText });
+	const iconEl = badge.createSpan({ cls: 'office-flow-progress-badge-icon' });
+	setIcon(iconEl, resolveActionIcon(action.kind));
+
+	let state: ProgressBadgeState = 'percent';
+	let pressedState: ProgressBadgeState | null = null;
+	let holdTimer: number | null = null;
+	let armTimer: number | null = null;
+
+	const clearTimers = () => {
+		if (holdTimer !== null) {
+			window.clearTimeout(holdTimer);
+			holdTimer = null;
+		}
+
+		if (armTimer !== null) {
+			window.clearTimeout(armTimer);
+			armTimer = null;
+		}
+	};
+
+	const setState = (next: ProgressBadgeState) => {
+		state = next;
+		badge.toggleClass('is-armed', next === 'armed' || next === 'holding');
+		badge.toggleClass('is-holding', next === 'holding');
+		badge.toggleClass('is-busy', next === 'busy');
+	};
+
+	const disarm = () => {
+		clearTimers();
+		setState('percent');
+	};
+
+	const arm = () => {
+		clearTimers();
+		setState('armed');
+		armTimer = window.setTimeout(disarm, ARCHIVE_ARM_TIMEOUT_MS);
+	};
+
+	const execute = async () => {
+		clearTimers();
+		setState('busy');
+
+		try {
+			const message = await action.run();
+			new Notice(message);
+			await renderOfficeProgressBlock(
+				context.plugin,
+				context.source,
+				context.containerEl,
+				context.sourcePath,
+			);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			new Notice(`Office Flow: ${message}`);
+			console.error('Office Flow archive/restore failed', error);
+			setState('percent');
+		}
+	};
+
+	const startHold = () => {
+		clearTimers();
+		setState('holding');
+		holdTimer = window.setTimeout(() => {
+			holdTimer = null;
+			void execute();
+		}, ARCHIVE_HOLD_MS);
+	};
+
+	const capturePointer = (event: PointerEvent) => {
+		try {
+			badge.setPointerCapture(event.pointerId);
+		} catch {
+			// The pointer may already be gone; capture is only a convenience.
+		}
+	};
+
+	const releasePointer = (event: PointerEvent) => {
+		try {
+			if (badge.hasPointerCapture(event.pointerId)) {
+				badge.releasePointerCapture(event.pointerId);
+			}
+		} catch {
+			// Ignore stale pointer ids.
+		}
+	};
+
+	badge.addEventListener('pointerdown', (event) => {
+		if (event.button !== 0 || state === 'busy') {
+			return;
+		}
+
+		event.preventDefault();
+		event.stopPropagation();
+		pressedState = state;
+		capturePointer(event);
+
+		if (state === 'armed') {
+			startHold();
+		}
+	});
+
+	const release = (event: PointerEvent) => {
+		event.stopPropagation();
+		releasePointer(event);
+
+		const pressed = pressedState;
+		pressedState = null;
+
+		if (state === 'holding') {
+			// Released before the hold completed: back to the plain percent.
+			disarm();
+			return;
+		}
+
+		if (state === 'percent' && pressed === 'percent') {
+			arm();
+		}
+	};
+
+	badge.addEventListener('pointerup', release);
+	badge.addEventListener('pointercancel', release);
+	badge.addEventListener('mousedown', (event) => {
+		event.preventDefault();
+		event.stopPropagation();
+	});
+	badge.addEventListener('click', (event) => {
+		event.preventDefault();
+		event.stopPropagation();
+	});
+	badge.addEventListener('contextmenu', (event) => {
+		event.preventDefault();
+	});
+}
+
+async function archiveSection(
+	plugin: OfficeFlowPlugin,
+	sourcePath: string,
+	sectionName: string,
+): Promise<string> {
+	const app = plugin.app;
+	const sourceFile = getMarkdownFile(app, sourcePath);
+	const sourceLines = splitLines(await app.vault.read(sourceFile));
+	const range = findUniqueHeadingRange(sourceLines, sectionName);
+	const body = splitSectionBody(sourceLines, range);
+
+	if (body.content.length === 0) {
+		throw new OfficeFlowActionError(`Nothing to archive under "${range.name}".`);
+	}
+
+	const folder = plugin.settings.archiveFolder || DEFAULT_ARCHIVE_FOLDER;
+	const stamp = moment();
+	const fileName = stamp.format(plugin.settings.archiveFileNameFormat || DEFAULT_ARCHIVE_FILE_NAME_FORMAT);
+	const targetPath = normalizePath(`${folder}/${fileName}.md`);
+	const targetFile = await getOrCreateMarkdownFile(app, targetPath);
+	const sourceLink = sourceFile.path.replace(/\.md$/i, '');
+	const headingName = range.name;
+
+	await app.vault.process(targetFile, (content) => {
+		const lines = splitLines(content);
+		const archiveHeading = pickArchiveHeadingName(lines, headingName, stamp);
+		const block = [
+			`## ${archiveHeading}`,
+			'```office-progress',
+			archiveHeading,
+			`restore: [[${sourceLink}]] : ${headingName}`,
+			'```',
+			...body.content,
+		];
+		return joinLines(appendBlock(lines, block));
+	});
+
+	await app.vault.process(sourceFile, (content) => {
+		const lines = splitLines(content);
+		const currentRange = findUniqueHeadingRange(lines, sectionName);
+		const currentBody = splitSectionBody(lines, currentRange);
+		return joinLines([
+			...lines.slice(0, currentRange.startLine + 1),
+			...currentBody.kept,
+			...ensureLeadingBlankLine(lines.slice(currentRange.endLineExclusive)),
+		]);
+	});
+
+	return `Archived ${describeTaskCount(body.content)} from "${headingName}" to ${targetPath}.`;
+}
+
+async function restoreSection(
+	plugin: OfficeFlowPlugin,
+	archivePath: string,
+	sectionName: string,
+	target: ProgressTarget,
+): Promise<string> {
+	const app = plugin.app;
+	const archiveFile = getMarkdownFile(app, archivePath);
+	const archiveLines = splitLines(await app.vault.read(archiveFile));
+	const range = findUniqueHeadingRange(archiveLines, sectionName);
+	const body = splitSectionBody(archiveLines, range);
+
+	if (body.content.length === 0) {
+		throw new OfficeFlowActionError(`Nothing to restore under "${range.name}".`);
+	}
+
+	const noteName = target.noteName ?? '';
+	const sourceFile = app.metadataCache.getFirstLinkpathDest(noteName, archivePath);
+
+	if (!sourceFile) {
+		throw new OfficeFlowActionError(`Note "${noteName}" was not found.`);
+	}
+
+	await app.vault.process(sourceFile, (content) => {
+		const lines = splitLines(content);
+		const sourceRange = findUniqueHeadingRange(lines, target.sectionName);
+		return joinLines(insertAtSectionEnd(lines, sourceRange, body.content));
+	});
+
+	await app.vault.process(archiveFile, (content) => {
+		const lines = splitLines(content);
+		const currentRange = findUniqueHeadingRange(lines, sectionName);
+		return joinLines(removeLineRange(lines, currentRange.startLine, currentRange.endLineExclusive));
+	});
+
+	return `Restored ${describeTaskCount(body.content)} to ${sourceFile.path} under "${target.sectionName}".`;
+}
+
+function getMarkdownFile(app: App, path: string): TFile {
+	const file = app.vault.getAbstractFileByPath(path);
+
+	if (!(file instanceof TFile)) {
+		throw new OfficeFlowActionError(`Note "${path}" was not found.`);
+	}
+
+	return file;
+}
+
+async function getOrCreateMarkdownFile(app: App, path: string): Promise<TFile> {
+	const existing = app.vault.getAbstractFileByPath(path);
+
+	if (existing instanceof TFile) {
+		return existing;
+	}
+
+	if (existing) {
+		throw new OfficeFlowActionError(`"${path}" exists but is not a file.`);
+	}
+
+	const slash = path.lastIndexOf('/');
+	await ensureFolder(app, slash === -1 ? '' : path.slice(0, slash));
+
+	return app.vault.create(path, '');
+}
+
+async function ensureFolder(app: App, folderPath: string): Promise<void> {
+	if (!folderPath) {
+		return;
+	}
+
+	let current = '';
+
+	for (const segment of folderPath.split('/')) {
+		if (!segment) {
+			continue;
+		}
+
+		current = current ? `${current}/${segment}` : segment;
+		const existing = app.vault.getAbstractFileByPath(current);
+
+		if (existing instanceof TFolder) {
+			continue;
+		}
+
+		if (existing) {
+			throw new OfficeFlowActionError(`"${current}" exists but is not a folder.`);
+		}
+
+		await app.vault.createFolder(current);
+	}
+}
+
+/** Exact heading name wins; otherwise fall back to the card's substring match. Must be unique. */
+function findUniqueHeadingRange(lines: string[], sectionName: string): HeadingRange {
+	const headings = findHeadings(lines);
+	const needle = sectionName.trim().toLowerCase();
+	const exact = headings.filter((heading) => heading.name.toLowerCase() === needle);
+	const matches = exact.length > 0 ? exact : findMatchingHeadingRanges(headings, sectionName);
+	const [match] = matches;
+
+	if (!match) {
+		throw new OfficeFlowActionError(`Heading "${sectionName}" was not found.`);
+	}
+
+	if (matches.length > 1) {
+		throw new OfficeFlowActionError(
+			`Heading "${sectionName}" matches ${matches.length} headings. Make it unique first.`,
+		);
+	}
+
+	return match;
+}
+
+function splitSectionBody(lines: string[], range: HeadingRange): SectionBody {
+	const kept: string[] = [];
+	const content: string[] = [];
+	let fence: 'progress' | 'other' | null = null;
+
+	for (let index = range.startLine + 1; index < range.endLineExclusive; index++) {
+		const line = lines[index] ?? '';
+
+		if (fence === null) {
+			if (isFenceLine(line)) {
+				fence = OFFICE_PROGRESS_FENCE_LINE.test(line) ? 'progress' : 'other';
+				(fence === 'progress' ? kept : content).push(line);
+				continue;
+			}
+
+			content.push(line);
+			continue;
+		}
+
+		(fence === 'progress' ? kept : content).push(line);
+
+		if (isFenceLine(line)) {
+			fence = null;
+		}
+	}
+
+	return { kept, content: trimBlankLines(content) };
+}
+
+function pickArchiveHeadingName(
+	lines: string[],
+	sectionName: string,
+	stamp: moment.Moment,
+): string {
+	const existing = findHeadings(lines).map((heading) => heading.name.toLowerCase());
+
+	for (const format of ['HH:mm', 'HH:mm:ss', 'HH:mm:ss.SSS']) {
+		const name = `${stamp.format(format)} ${sectionName}`;
+		const lower = name.toLowerCase();
+
+		if (!existing.some((heading) => heading.includes(lower))) {
+			return name;
+		}
+	}
+
+	return `${stamp.format('HH:mm:ss.SSS')} ${sectionName} ${Date.now()}`;
+}
+
+function appendBlock(lines: string[], block: string[]): string[] {
+	const existing = trimTrailingBlankLines(lines);
+	return existing.length > 0 ? [...existing, '', ...block, ''] : [...block, ''];
+}
+
+function insertAtSectionEnd(lines: string[], range: HeadingRange, content: string[]): string[] {
+	let insertAt = range.startLine + 1;
+
+	for (let index = range.endLineExclusive - 1; index > range.startLine; index--) {
+		if ((lines[index] ?? '').trim() !== '') {
+			insertAt = index + 1;
+			break;
+		}
+	}
+
+	return [
+		...lines.slice(0, insertAt),
+		...content,
+		...ensureLeadingBlankLine(lines.slice(insertAt)),
+	];
+}
+
+function removeLineRange(lines: string[], start: number, endExclusive: number): string[] {
+	const before = trimTrailingBlankLines(lines.slice(0, start));
+	const after = trimLeadingBlankLines(lines.slice(endExclusive));
+	const merged = before.length > 0 && after.length > 0 ? [...before, '', ...after] : [...before, ...after];
+	const trimmed = trimTrailingBlankLines(merged);
+	return trimmed.length > 0 ? [...trimmed, ''] : [];
+}
+
+function ensureLeadingBlankLine(lines: string[]): string[] {
+	const [first] = lines;
+	return first !== undefined && first.trim() !== '' ? ['', ...lines] : lines;
+}
+
+function trimBlankLines(lines: string[]): string[] {
+	return trimTrailingBlankLines(trimLeadingBlankLines(lines));
+}
+
+function trimLeadingBlankLines(lines: string[]): string[] {
+	let start = 0;
+
+	while (start < lines.length && (lines[start] ?? '').trim() === '') {
+		start++;
+	}
+
+	return lines.slice(start);
+}
+
+function trimTrailingBlankLines(lines: string[]): string[] {
+	let end = lines.length;
+
+	while (end > 0 && (lines[end - 1] ?? '').trim() === '') {
+		end--;
+	}
+
+	return lines.slice(0, end);
+}
+
+function describeTaskCount(lines: string[]): string {
+	const count = lines.filter((line, index) => getTaskLineInfo(line, index) !== null).length;
+	return `${count} task${count === 1 ? '' : 's'}`;
+}
+
+function splitLines(content: string): string[] {
+	return content.split(/\r?\n/);
+}
+
+function joinLines(lines: string[]): string {
+	return lines.join('\n');
 }
