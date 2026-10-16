@@ -1,9 +1,10 @@
 {
 	"id": "office-flow",
 	"name": "Office Flow",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"minAppVersion": "1.0.0",
-	"description": "Small workflow helpers for Obsidian.",
+	"description": "Inline task buttons, progress cards with one-gesture archiving, and Home and favorite shortcuts for task notes.",
 	"author": "qinmi",
+	"authorUrl": "https://github.com/dan9574",
 	"isDesktopOnly": false
 }

@@ -33,10 +33,11 @@ const INSERTED_TASK_LINE = '\t- [ ] ';
 const INSERTED_NOTE_LINE = '\t🖊';
 const DEFAULT_CATEGORIES = ['Action', 'Research', 'Design', 'Code'] as const;
 const CATEGORY_COUNT = 4;
-const PINK_SIDEBAR_STYLE_ID = 'office-flow-pink-sidebar-style';
+const PINK_SIDEBAR_CLASS = 'office-flow-pink-sidebar';
 const DEFAULT_ARCHIVE_FOLDER = 'archive/todo';
 const DEFAULT_ARCHIVE_DATE_FORMAT = 'YYYY_MM_DD';
 const DEFAULT_ARCHIVE_FILE_SUFFIX = 'temp_todo';
+/** Keep in sync with the ring transition duration in styles.css. */
 const ARCHIVE_HOLD_MS = 2000;
 const ARCHIVE_ARM_TIMEOUT_MS = 5000;
 const OFFICE_PROGRESS_FENCE_LINE = /^\s*(?:```+|~~~+)\s*office-progress\s*$/i;
@@ -171,7 +172,8 @@ export default class OfficeFlowPlugin extends Plugin {
 	}
 
 	onunload() {
-		this.removePinkSidebarStyle();
+		this.removeHomeActions();
+		document.body.removeClass(PINK_SIDEBAR_CLASS);
 	}
 
 	async loadSettings(): Promise<void> {
@@ -211,51 +213,9 @@ export default class OfficeFlowPlugin extends Plugin {
 		this.removeHomeActions();
 	}
 
+	/** The pink sidebar is plain CSS in styles.css, switched on by a body class. */
 	applyPinkSidebarSetting(): void {
-		if (this.settings.enablePinkSidebar) {
-			this.injectPinkSidebarStyle();
-			return;
-		}
-
-		this.removePinkSidebarStyle();
-	}
-
-	private injectPinkSidebarStyle(): void {
-		document.getElementById(PINK_SIDEBAR_STYLE_ID)?.remove();
-
-		const pink = '#ffe6f2';
-		const pinkAlt = '#ffd6ec';
-		const divider = '#f9cbe0';
-		const css = `
-			.workspace-split.mod-left-split,
-			.workspace-sidebar-container.mod-left,
-			.is-left .workspace-tabs { background: ${pink} !important; }
-
-			.workspace-ribbon.mod-left { background: ${pinkAlt} !important; }
-
-			.workspace-split.mod-right-split,
-			.workspace-sidebar-container.mod-right,
-			.is-right .workspace-tabs { background: ${pink} !important; }
-
-			.workspace-ribbon.mod-right { background: ${pinkAlt} !important; }
-
-			.workspace-split.mod-horizontal .workspace-leaf:nth-child(1) .workspace-leaf-content { background: ${pink} !important; }
-			.workspace-split.mod-horizontal .workspace-leaf:nth-child(3) .workspace-leaf-content { background: ${pink} !important; }
-
-			.workspace-leaf-resize-handle { background: ${divider} !important; }
-
-			.workspace-split.mod-left-split .view-content,
-			.workspace-split.mod-right-split .view-content { background: ${pink} !important; }
-		`;
-
-		const styleEl = document.createElement('style');
-		styleEl.id = PINK_SIDEBAR_STYLE_ID;
-		styleEl.textContent = css;
-		document.head.appendChild(styleEl);
-	}
-
-	private removePinkSidebarStyle(): void {
-		document.getElementById(PINK_SIDEBAR_STYLE_ID)?.remove();
+		document.body.toggleClass(PINK_SIDEBAR_CLASS, this.settings.enablePinkSidebar);
 	}
 
 	async openHomeNote(): Promise<void> {
@@ -310,10 +270,9 @@ export default class OfficeFlowPlugin extends Plugin {
 			return;
 		}
 
-		const leaf = this.app.workspace.activeLeaf;
-		const view = leaf?.view;
+		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
 
-		if (!(view instanceof MarkdownView)) {
+		if (!view) {
 			return;
 		}
 
@@ -397,8 +356,6 @@ class OfficeFlowSettingTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
-
-		new Setting(containerEl).setName('Features').setHeading();
 
 		new Setting(containerEl)
 			.setName('Task edit mode')
@@ -1452,7 +1409,7 @@ function renderProgressCards(context: ProgressBlockContext, cards: ProgressCardD
 		trackEl.setAttribute('aria-valuenow', String(card.percent));
 
 		const fillEl = trackEl.createDiv({ cls: 'office-flow-progress-fill' });
-		fillEl.style.width = `${card.percent}%`;
+		fillEl.setCssProps({ '--office-flow-progress': `${card.percent}%` });
 	}
 }
 
@@ -1560,7 +1517,6 @@ function renderProgressBadge(
 		},
 	});
 	badge.type = 'button';
-	badge.style.setProperty('--office-flow-hold-duration', `${ARCHIVE_HOLD_MS}ms`);
 
 	const ring = badge.createSvg('svg', {
 		cls: 'office-flow-progress-ring',
