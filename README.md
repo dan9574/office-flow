@@ -128,3 +128,5 @@ npm run build
 ```
 
 `npm run build` type-checks and bundles `src/main.ts` into `main.js`. To try a change, copy `manifest.json`, `main.js` and `styles.css` into `<vault>/.obsidian/plugins/office-flow/` and reload Obsidian. `npm run dev` rebuilds on every save.
+
+To release, bump the version in `manifest.json`, `package.json` and `versions.json`, commit on `main`, and push a tag named after the version (for example `1.2.3`). The release workflow builds the plugin, attests `main.js`, `manifest.json` and `styles.css`, and publishes them as the only release assets; if you create the release by hand first, it attaches the files to that release instead.

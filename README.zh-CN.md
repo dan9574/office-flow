@@ -128,3 +128,5 @@ npm run build
 ```
 
 `npm run build` 会做类型检查并把 `src/main.ts` 打包成 `main.js`。要试运行改动，把 `manifest.json`、`main.js`、`styles.css` 复制到 `<库>/.obsidian/plugins/office-flow/` 后重载 Obsidian。`npm run dev` 会在每次保存时重新构建。
+
+发布时，先在 `manifest.json`、`package.json` 和 `versions.json` 中更新版本号，在 `main` 上提交，然后推送一个以版本号命名的标签（例如 `1.2.3`）。发布工作流会构建插件，为 `main.js`、`manifest.json`、`styles.css` 生成构建来源证明（attestation），并只用这三个文件发布 GitHub release；如果你先手动创建了 release，工作流会把文件附加到那个 release 上。
