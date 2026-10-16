@@ -1,3 +1,5 @@
+**English** | [简体中文](README.zh-CN.md)
+
 # Office Flow
 
 Office Flow is a small personal Obsidian plugin for faster task notes and a softer workspace: inline task buttons, pretty progress cards, one-gesture archiving of temporary to-do lists, and two header shortcuts.
@@ -116,16 +118,6 @@ Turns the left and right sidebars and ribbons a soft pink. Just a toggle.
 5. Restart Obsidian, go back to **Community plugins** and enable **Office Flow**.
 
 The task buttons need Obsidian's editing mode (Live Preview or source). Progress cards also render in reading mode and inside other plugins that render Markdown, such as Always-on-Top Tasks.
-
----
-
-## 安装指南
-
-1. 从最新的 [Release](https://github.com/dan9574/office-flow/releases/latest) 页面下载 `office-flow.zip`。
-2. 解压，得到包含 `manifest.json`、`main.js`、`styles.css` 的 `office-flow` 文件夹。
-3. 打开 Obsidian **设置** → **第三方插件** → **已安装插件**，点击 **打开插件文件夹** 图标。
-4. 把 `office-flow` 文件夹放进这个插件文件夹。
-5. 重启 Obsidian，回到 **第三方插件** 设置页并启用 **Office Flow**。
 
 ## Development
 
