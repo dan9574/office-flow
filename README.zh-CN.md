@@ -1,0 +1,129 @@
+[English](README.md) | **简体中文**
+
+# Office Flow
+
+Office Flow 是一个小而实用的个人 Obsidian 插件，让任务笔记更快、工作区更柔和：行内任务按钮、漂亮的进度卡片、一个手势归档临时待办清单，以及两个标题栏快捷按钮。
+
+![To_do 章节上方的进度卡片](docs/screenshots/progress-card.png)
+
+## 功能
+
+- **任务编辑模式**：每条未完成任务后面有行内按钮，用来插入子任务、🖊 笔记和顶层任务；空任务上还有分类选择器。
+- **进度卡片**：`office-progress` 代码块渲染成进度卡片，统计当前笔记或其他笔记的某个章节。
+- **归档与还原**：按住卡片上的百分比徽章，把章节下的任务移到当天的归档文件；在归档文件里再按住即可还原。
+- **Home 与收藏按钮**：标题栏两个按钮，分别打开 Home 笔记和收藏笔记。
+- **粉色侧边栏**：可选的柔粉色侧边栏和功能区。
+
+只用 Obsidian 原生 API、TypeScript 和 CSS，没有外部服务，没有额外依赖。
+
+## 任务编辑模式
+
+编辑模式下，每条未完成任务（`- [ ]`）的复选框后面会出现小按钮：
+
+![任务按钮与展开的分类选择器](docs/screenshots/task-edit-mode.png)
+
+| 按钮 | 在任务下方插入 |
+| --- | --- |
+| `+` | 一条缩进的子任务（`	- [ ] `） |
+| `✎` | 一条缩进的 🖊 笔记（`	🖊`） |
+| `-`（仅子任务显示） | 一条新的顶层任务（`- [ ] `） |
+| 分类选择器（仅空任务显示） | 四个分类标签之一，作为任务文字 |
+
+🖊 笔记属于它上方的任务，所以新任务会插在任务的笔记行之后，按钮和在任务上按 Enter 都是如此。在空的插入行上按 Backspace 会把这一行删掉。
+
+四个分类标签默认是 Action、Research、Design、Code，可在设置中修改。
+
+命令：`Toggle task edit mode`、`Insert child task`、`Insert pen note`。
+
+## 进度卡片
+
+在任意位置放一个 `office-progress` 代码块，每行写一个要统计的章节。
+
+当前笔记的章节：
+
+````md
+```office-progress
+To_do
+```
+````
+
+其他笔记的章节，可加别名作为卡片标题：
+
+````md
+```office-progress
+[[Home 7_21|Work]] : Today's Tasks
+[Everyday_Task] : Today's Tasks
+```
+````
+
+章节指标题文字包含给定名称的标题，范围到下一个同级或更高级标题为止。计数只算叶子任务：有子任务的任务是分组，不算任务。点击跨笔记卡片上的别名会打开那篇笔记。
+
+## 归档与还原
+
+临时待办清单最好能一个手势清空，又不会丢。对当前笔记章节的卡片来说，百分比徽章就是这个手势：
+
+1. 点一下百分比，它变成归档图标（5 秒后或短按一下会变回去）。
+2. 按住图标 2 秒，圆环填满后，标题下的全部内容（任务、子任务、🖊 笔记、其他块）移到当天的归档文件。标题和它的 `office-progress` 块留在原地。
+
+归档内容写入 `archive/todo/2026_10_16_temp_todo.md`。每个归档块自带一张卡片，并记住来源：
+
+````md
+## 15:32 To_do
+```office-progress
+15:32 To_do
+restore: [[study/Everyday_Task]] : To_do
+```
+- [ ] Music_hw
+````
+
+在归档文件夹里，徽章变成蓝色，操作反过来：按住它把块移回原来的标题下，并从归档文件删除。归档文件夹内的笔记永远不会被归档。
+
+两种操作都要求标题在笔记中唯一匹配，否则弹出提示且不写入任何内容。归档文件先写入、再删除源内容，所以中途失败不会丢任务。
+
+## Home 与收藏按钮
+
+每个 Markdown 视图右上角有两个按钮：
+
+- **Home** 打开设置里的 *Home note*（默认 `Home`）。
+- **爱心** 打开设置里的 *Favorite note*。在爱心上点右键，把当前笔记设为收藏。
+
+命令：`Open Home note`、`Open favorite note`。
+
+## 粉色侧边栏
+
+把左右侧边栏和功能区变成柔粉色。只是一个开关。
+
+## 设置
+
+| 设置 | 默认值 | 作用 |
+| --- | --- | --- |
+| Task edit mode | 开 | 显示行内任务按钮和 Enter / Backspace 辅助。 |
+| Category picker | 开 | 在空任务上显示分类标签。 |
+| Home button | 开 | 在视图标题栏显示 Home 和爱心按钮。 |
+| Office progress blocks | 开 | 渲染 `office-progress` 代码块。 |
+| Pink sidebar | 开 | 应用粉色侧边栏样式。 |
+| Home note | `Home` | Home 按钮打开的笔记。 |
+| Favorite note | 空 | 爱心按钮打开的笔记。 |
+| Archive folder | `archive/todo` | 归档内容的去处。文件夹内的卡片显示还原控件。 |
+| Archive date format | `YYYY_MM_DD` | 归档文件名开头的日期格式（Moment.js）。 |
+| Archive file name suffix | `temp_todo` | 日期后用下划线连接的纯文字。 |
+| Category 1 到 4 | Action、Research、Design、Code | 分类选择器提供的标签。 |
+
+## 安装
+
+1. 从最新的 [Release](https://github.com/dan9574/office-flow/releases/latest) 下载 `office-flow.zip`。
+2. 解压，得到包含 `manifest.json`、`main.js`、`styles.css` 的 `office-flow` 文件夹。
+3. 打开 Obsidian **设置** → **第三方插件** → **已安装插件**，点击 **打开插件文件夹** 图标。
+4. 把 `office-flow` 文件夹放进这个插件文件夹。
+5. 重启 Obsidian，回到 **第三方插件** 设置页并启用 **Office Flow**。
+
+任务按钮需要 Obsidian 的编辑模式（实时预览或源码模式）。进度卡片在阅读模式下也能渲染，也能在其他渲染 Markdown 的插件里显示，例如 Always-on-Top Tasks。
+
+## 开发
+
+```bash
+npm install
+npm run build
+```
+
+`npm run build` 会做类型检查并把 `src/main.ts` 打包成 `main.js`。要试运行改动，把 `manifest.json`、`main.js`、`styles.css` 复制到 `<库>/.obsidian/plugins/office-flow/` 后重载 Obsidian。`npm run dev` 会在每次保存时重新构建。
