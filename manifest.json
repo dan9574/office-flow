@@ -1,7 +1,7 @@
 {
 	"id": "office-flow",
 	"name": "Office Flow",
-	"version": "1.2.2",
+	"version": "1.2.3",
 	"minAppVersion": "1.7.2",
 	"description": "Inline task buttons, progress cards with one-gesture archiving, and Home and favorite shortcuts for task notes.",
 	"author": "qinmi",
