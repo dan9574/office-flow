@@ -150,28 +150,28 @@
 	color: color-mix(in srgb, var(--text-normal) 70%, #308466 30%);
 }
 
-/* Pink sidebar, switched on by a body class. The !important matches the
-   previously injected style so theme sidebar backgrounds do not win. */
-body.office-flow-pink-sidebar .workspace-split.mod-left-split,
-body.office-flow-pink-sidebar .workspace-sidebar-container.mod-left,
-body.office-flow-pink-sidebar .is-left .workspace-tabs,
-body.office-flow-pink-sidebar .workspace-split.mod-right-split,
-body.office-flow-pink-sidebar .workspace-sidebar-container.mod-right,
-body.office-flow-pink-sidebar .is-right .workspace-tabs,
-body.office-flow-pink-sidebar .workspace-split.mod-horizontal .workspace-leaf:nth-child(1) .workspace-leaf-content,
-body.office-flow-pink-sidebar .workspace-split.mod-horizontal .workspace-leaf:nth-child(3) .workspace-leaf-content,
-body.office-flow-pink-sidebar .workspace-split.mod-left-split .view-content,
-body.office-flow-pink-sidebar .workspace-split.mod-right-split .view-content {
-	background: #ffe6f2 !important;
+/* Pink sidebar, switched on by a body class. The class is repeated so the
+   rules outrank theme sidebar backgrounds by specificity alone. */
+body.office-flow-pink-sidebar.office-flow-pink-sidebar.office-flow-pink-sidebar .workspace-split.mod-left-split,
+body.office-flow-pink-sidebar.office-flow-pink-sidebar.office-flow-pink-sidebar .workspace-sidebar-container.mod-left,
+body.office-flow-pink-sidebar.office-flow-pink-sidebar.office-flow-pink-sidebar .is-left .workspace-tabs,
+body.office-flow-pink-sidebar.office-flow-pink-sidebar.office-flow-pink-sidebar .workspace-split.mod-right-split,
+body.office-flow-pink-sidebar.office-flow-pink-sidebar.office-flow-pink-sidebar .workspace-sidebar-container.mod-right,
+body.office-flow-pink-sidebar.office-flow-pink-sidebar.office-flow-pink-sidebar .is-right .workspace-tabs,
+body.office-flow-pink-sidebar.office-flow-pink-sidebar.office-flow-pink-sidebar .workspace-split.mod-horizontal .workspace-leaf:nth-child(1) .workspace-leaf-content,
+body.office-flow-pink-sidebar.office-flow-pink-sidebar.office-flow-pink-sidebar .workspace-split.mod-horizontal .workspace-leaf:nth-child(3) .workspace-leaf-content,
+body.office-flow-pink-sidebar.office-flow-pink-sidebar.office-flow-pink-sidebar .workspace-split.mod-left-split .view-content,
+body.office-flow-pink-sidebar.office-flow-pink-sidebar.office-flow-pink-sidebar .workspace-split.mod-right-split .view-content {
+	background: #ffe6f2;
 }
 
-body.office-flow-pink-sidebar .workspace-ribbon.mod-left,
-body.office-flow-pink-sidebar .workspace-ribbon.mod-right {
-	background: #ffd6ec !important;
+body.office-flow-pink-sidebar.office-flow-pink-sidebar.office-flow-pink-sidebar .workspace-ribbon.mod-left,
+body.office-flow-pink-sidebar.office-flow-pink-sidebar.office-flow-pink-sidebar .workspace-ribbon.mod-right {
+	background: #ffd6ec;
 }
 
-body.office-flow-pink-sidebar .workspace-leaf-resize-handle {
-	background: #f9cbe0 !important;
+body.office-flow-pink-sidebar.office-flow-pink-sidebar.office-flow-pink-sidebar .workspace-leaf-resize-handle {
+	background: #f9cbe0;
 }
 
 .office-flow-home-action {

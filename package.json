@@ -1,6 +1,6 @@
 {
 	"name": "office-flow",
-	"version": "1.2.1",
+	"version": "1.2.2",
 	"description": "Personal Obsidian workflow helpers.",
 	"main": "main.js",
 	"type": "module",
@@ -14,6 +14,10 @@
 		"workflow"
 	],
 	"license": "0-BSD",
+	"dependencies": {
+		"@codemirror/state": "^6.5.0",
+		"@codemirror/view": "^6.38.6"
+	},
 	"devDependencies": {
 		"@types/node": "^22.15.17",
 		"esbuild": "0.25.5",

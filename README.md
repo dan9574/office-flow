@@ -111,11 +111,12 @@ Turns the left and right sidebars and ribbons a soft pink. Just a toggle.
 
 ## Installation
 
-1. Download `office-flow.zip` from the latest [release](https://github.com/dan9574/office-flow/releases/latest).
-2. Extract it. You get an `office-flow` folder with `manifest.json`, `main.js` and `styles.css`.
-3. In Obsidian open **Settings** → **Community plugins** → **Installed plugins** and click the **Open plugins folder** icon.
-4. Move the `office-flow` folder into that plugins folder.
-5. Restart Obsidian, go back to **Community plugins** and enable **Office Flow**.
+1. Download `main.js`, `manifest.json` and `styles.css` from the latest [release](https://github.com/dan9574/office-flow/releases/latest).
+2. In Obsidian open **Settings** → **Community plugins** → **Installed plugins** and click the **Open plugins folder** icon.
+3. Create a folder named `office-flow` inside that plugins folder and put the three files in it.
+4. Restart Obsidian, go back to **Community plugins** and enable **Office Flow**.
+
+Once the plugin is listed in the community directory you can install it from **Community plugins** → **Browse** instead.
 
 The task buttons need Obsidian's editing mode (Live Preview or source). Progress cards also render in reading mode and inside other plugins that render Markdown, such as Always-on-Top Tasks.
 
