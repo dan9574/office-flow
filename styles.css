@@ -150,6 +150,30 @@
 	color: color-mix(in srgb, var(--text-normal) 70%, #308466 30%);
 }
 
+/* Pink sidebar, switched on by a body class. The !important matches the
+   previously injected style so theme sidebar backgrounds do not win. */
+body.office-flow-pink-sidebar .workspace-split.mod-left-split,
+body.office-flow-pink-sidebar .workspace-sidebar-container.mod-left,
+body.office-flow-pink-sidebar .is-left .workspace-tabs,
+body.office-flow-pink-sidebar .workspace-split.mod-right-split,
+body.office-flow-pink-sidebar .workspace-sidebar-container.mod-right,
+body.office-flow-pink-sidebar .is-right .workspace-tabs,
+body.office-flow-pink-sidebar .workspace-split.mod-horizontal .workspace-leaf:nth-child(1) .workspace-leaf-content,
+body.office-flow-pink-sidebar .workspace-split.mod-horizontal .workspace-leaf:nth-child(3) .workspace-leaf-content,
+body.office-flow-pink-sidebar .workspace-split.mod-left-split .view-content,
+body.office-flow-pink-sidebar .workspace-split.mod-right-split .view-content {
+	background: #ffe6f2 !important;
+}
+
+body.office-flow-pink-sidebar .workspace-ribbon.mod-left,
+body.office-flow-pink-sidebar .workspace-ribbon.mod-right {
+	background: #ffd6ec !important;
+}
+
+body.office-flow-pink-sidebar .workspace-leaf-resize-handle {
+	background: #f9cbe0 !important;
+}
+
 .office-flow-home-action {
 	color: var(--text-muted);
 }
@@ -338,7 +362,8 @@
 
 .office-flow-progress-badge.is-holding .office-flow-progress-ring-fill {
 	stroke-dashoffset: 0;
-	transition: stroke-dashoffset var(--office-flow-hold-duration, 2000ms) linear;
+	/* Keep in sync with ARCHIVE_HOLD_MS in main.ts. */
+	transition: stroke-dashoffset 2000ms linear;
 }
 
 .office-flow-progress-badge.is-busy {
@@ -371,6 +396,7 @@
 }
 
 .office-flow-progress-fill {
+	width: var(--office-flow-progress, 0%);
 	height: 100%;
 	border-radius: inherit;
 	background: linear-gradient(90deg, #ff8fbd, #d94b87);
