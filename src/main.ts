@@ -177,8 +177,9 @@ export default class OfficeFlowPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		const loaded = (await this.loadData()) as Partial<OfficeFlowSettings> | null;
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+		const loaded: unknown = await this.loadData();
+		const saved = loaded !== null && typeof loaded === 'object' ? (loaded as Partial<OfficeFlowSettings>) : {};
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
 		this.settings.homeNote = normalizeHomeNote(this.settings.homeNote);
 		this.settings.categories = normalizeCategories(this.settings.categories);
 		this.settings.favoriteNote = normalizeHomeNote(this.settings.favoriteNote ?? '');
@@ -709,9 +710,10 @@ class TaskActionWidget extends WidgetType {
 	}
 
 	toDOM(view: EditorView): HTMLElement {
-		const wrapper = document.createElement('span');
-		wrapper.className = 'office-flow-task-actions';
-		wrapper.setAttribute('aria-label', 'Office Flow task actions');
+		const wrapper = createSpan({
+			cls: 'office-flow-task-actions',
+			attr: { 'aria-label': 'Office Flow task actions' },
+		});
 
 		const addButton = createTaskActionButton('+', 'Insert child task', () => {
 			insertLineBelowTask(view, this.lineNumber, INSERTED_TASK_LINE);
@@ -749,8 +751,7 @@ function createTaskCategoryPicker(
 	lineNumber: number,
 	categories: string[],
 ): HTMLElement {
-	const picker = document.createElement('span');
-	picker.className = 'office-flow-task-category-picker';
+	const picker = createSpan({ cls: 'office-flow-task-category-picker' });
 
 	const trigger = createTaskActionButton('', 'Choose task category', () => undefined);
 	trigger.addClass('office-flow-task-category-trigger');
@@ -758,9 +759,10 @@ function createTaskCategoryPicker(
 	trigger.createSpan({ cls: 'office-flow-task-category-icon' });
 	picker.append(trigger);
 
-	const options = document.createElement('span');
-	options.className = 'office-flow-task-category-options';
-	options.setAttribute('aria-label', 'Task categories');
+	const options = createSpan({
+		cls: 'office-flow-task-category-options',
+		attr: { 'aria-label': 'Task categories' },
+	});
 
 	for (const [index, category] of categories.entries()) {
 		const option = createTaskActionButton(
@@ -784,11 +786,11 @@ function createTaskActionButton(
 	label: string,
 	onClick: () => void,
 ): HTMLButtonElement {
-	const button = document.createElement('button');
-	button.type = 'button';
-	button.className = 'office-flow-task-action-button';
-	button.textContent = text;
-	button.setAttribute('aria-label', label);
+	const button = createEl('button', {
+		cls: 'office-flow-task-action-button',
+		text,
+		attr: { type: 'button', 'aria-label': label },
+	});
 
 	button.addEventListener('mousedown', (event) => {
 		event.preventDefault();

@@ -111,11 +111,12 @@ restore: [[study/Everyday_Task]] : To_do
 
 ## 安装
 
-1. 从最新的 [Release](https://github.com/dan9574/office-flow/releases/latest) 下载 `office-flow.zip`。
-2. 解压，得到包含 `manifest.json`、`main.js`、`styles.css` 的 `office-flow` 文件夹。
-3. 打开 Obsidian **设置** → **第三方插件** → **已安装插件**，点击 **打开插件文件夹** 图标。
-4. 把 `office-flow` 文件夹放进这个插件文件夹。
-5. 重启 Obsidian，回到 **第三方插件** 设置页并启用 **Office Flow**。
+1. 从最新的 [Release](https://github.com/dan9574/office-flow/releases/latest) 下载 `main.js`、`manifest.json`、`styles.css` 三个文件。
+2. 打开 Obsidian **设置** → **第三方插件** → **已安装插件**，点击 **打开插件文件夹** 图标。
+3. 在这个插件文件夹里新建一个名为 `office-flow` 的文件夹，把三个文件放进去。
+4. 重启 Obsidian，回到 **第三方插件** 设置页并启用 **Office Flow**。
+
+插件上架社区目录后，也可以直接在 **第三方插件** → **浏览** 里搜索安装。
 
 任务按钮需要 Obsidian 的编辑模式（实时预览或源码模式）。进度卡片在阅读模式下也能渲染，也能在其他渲染 Markdown 的插件里显示，例如 Always-on-Top Tasks。
 
