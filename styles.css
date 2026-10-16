@@ -158,6 +158,10 @@
 	color: var(--text-normal);
 }
 
+.office-flow-favorite-action:hover {
+	color: #d94b87;
+}
+
 .office-flow-progress {
 	display: grid;
 	gap: 10px;
@@ -222,6 +226,133 @@
 	font-size: 13px;
 	font-weight: 700;
 	font-variant-numeric: tabular-nums;
+}
+
+/* Percent badge that doubles as the archive / restore control.
+   At rest it is the plain percent text (negative margins cancel the padding,
+   so it sits exactly where the old percent label sat); the pill shows on hover. */
+.office-flow-progress-badge {
+	--office-flow-badge-accent: #d94b87;
+	--office-flow-badge-soft: #ffe8f3;
+	--office-flow-badge-border: #ff9bc7;
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+	box-sizing: border-box;
+	height: auto;
+	min-height: 0;
+	min-width: 0;
+	margin: -3px -8px;
+	padding: 3px 8px;
+	border: 0;
+	border-radius: 999px;
+	background: transparent;
+	box-shadow: none;
+	font-family: inherit;
+	line-height: inherit;
+	cursor: pointer;
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+	transition: background 120ms ease;
+}
+
+.office-flow-progress-badge-restore {
+	--office-flow-badge-accent: #3f86c9;
+	--office-flow-badge-soft: #e6f1fb;
+	--office-flow-badge-border: #8fc0ea;
+}
+
+.office-flow-progress-badge:hover {
+	background: color-mix(in srgb, var(--office-flow-badge-soft) 68%, var(--background-primary) 32%);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--office-flow-badge-border) 38%, var(--background-modifier-border));
+}
+
+.office-flow-progress-badge:focus-visible {
+	outline: 2px solid color-mix(in srgb, var(--office-flow-badge-accent) 50%, transparent);
+	outline-offset: 2px;
+}
+
+.office-flow-progress-badge-icon {
+	display: none;
+	width: 14px;
+	height: 14px;
+	color: var(--office-flow-badge-accent);
+}
+
+.office-flow-progress-badge-icon svg {
+	width: 14px;
+	height: 14px;
+}
+
+.office-flow-progress-badge.is-armed {
+	align-self: center;
+	width: 26px;
+	height: 26px;
+	margin: -6px 0;
+	padding: 0;
+	background: color-mix(in srgb, var(--office-flow-badge-soft) 80%, var(--background-primary) 20%);
+	box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--office-flow-badge-border) 48%, var(--background-modifier-border));
+}
+
+.office-flow-progress-badge.is-armed .office-flow-progress-badge-label {
+	display: none;
+}
+
+.office-flow-progress-badge.is-armed .office-flow-progress-badge-icon {
+	display: inline-flex;
+}
+
+.office-flow-progress-ring {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	transform: rotate(-90deg);
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 120ms ease;
+}
+
+.office-flow-progress-badge.is-armed .office-flow-progress-ring {
+	opacity: 1;
+}
+
+.office-flow-progress-ring-track {
+	fill: none;
+	stroke: color-mix(in srgb, var(--office-flow-badge-soft) 55%, var(--background-modifier-border) 45%);
+	stroke-width: 3;
+}
+
+.office-flow-progress-ring-fill {
+	fill: none;
+	stroke: var(--office-flow-badge-accent);
+	stroke-width: 3;
+	stroke-linecap: round;
+	stroke-dasharray: 97.4;
+	stroke-dashoffset: 97.4;
+	transition: stroke-dashoffset 150ms ease;
+}
+
+.office-flow-progress-badge.is-holding .office-flow-progress-ring-fill {
+	stroke-dashoffset: 0;
+	transition: stroke-dashoffset var(--office-flow-hold-duration, 2000ms) linear;
+}
+
+.office-flow-progress-badge.is-busy {
+	opacity: 0.6;
+	cursor: progress;
+}
+
+.office-flow-progress-badge.is-busy .office-flow-progress-ring {
+	opacity: 1;
+}
+
+.office-flow-progress-badge.is-busy .office-flow-progress-ring-fill {
+	stroke-dashoffset: 0;
+	transition: none;
 }
 
 .office-flow-progress-meta {
