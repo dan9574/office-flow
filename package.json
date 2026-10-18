@@ -1,6 +1,6 @@
 {
 	"name": "office-flow",
-	"version": "1.2.3",
+	"version": "1.3.0",
 	"description": "Personal Obsidian workflow helpers.",
 	"main": "main.js",
 	"type": "module",

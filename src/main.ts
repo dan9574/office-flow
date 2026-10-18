@@ -11,6 +11,8 @@ import {
 import {
 	App,
 	Editor,
+	MarkdownFileInfo,
+	MarkdownRenderChild,
 	MarkdownView,
 	Notice,
 	Plugin,
@@ -26,6 +28,9 @@ import {
 
 const UNFINISHED_TASK_LINE = /^(\t?)- \[ \]/;
 const EMPTY_TASK_LINE = /^(\t?- \[ \])\s*$/;
+/** Any task line, done or not, at any indent: where plain Enter must not continue the list. */
+const TASK_LINE = /^[\t ]*- \[[ xX]\]/;
+const EMPTY_ANY_TASK_LINE = /^[\t ]*- \[[ xX]\]\s*$/;
 const PEN_NOTE_LINE = /^\s*🖊/;
 const EMPTY_INSERTED_LINE = /^(?:\t?- \[ \] ?|\t?🖊 ?)$/;
 const INSERTED_TOP_LEVEL_TASK_LINE = '- [ ] ';
@@ -40,6 +45,8 @@ const DEFAULT_ARCHIVE_FILE_SUFFIX = 'temp_todo';
 /** Keep in sync with the ring transition duration in styles.css. */
 const ARCHIVE_HOLD_MS = 2000;
 const ARCHIVE_ARM_TIMEOUT_MS = 5000;
+/** Progress cards repaint this long after the last change to a tracked note. */
+const PROGRESS_REFRESH_DELAY_MS = 300;
 const OFFICE_PROGRESS_FENCE_LINE = /^\s*(?:```+|~~~+)\s*office-progress\s*$/i;
 const RESTORE_TARGET_LINE = /^restore\s*:\s*(.+)$/i;
 
@@ -47,6 +54,7 @@ interface OfficeFlowSettings {
 	homeNote: string;
 	enableTaskEditMode: boolean;
 	enableCategoryPicker: boolean;
+	enableShiftEnterTasks: boolean;
 	enableHomeButton: boolean;
 	enableOfficeProgressBlocks: boolean;
 	enablePinkSidebar: boolean;
@@ -61,6 +69,7 @@ const DEFAULT_SETTINGS: OfficeFlowSettings = {
 	homeNote: 'Home',
 	enableTaskEditMode: true,
 	enableCategoryPicker: true,
+	enableShiftEnterTasks: true,
 	enableHomeButton: true,
 	enableOfficeProgressBlocks: true,
 	enablePinkSidebar: true,
@@ -86,6 +95,7 @@ export default class OfficeFlowPlugin extends Plugin {
 		this.taskEditModeEnabled = this.settings.enableTaskEditMode;
 
 		this.registerEditorExtension(this.editorExtensions);
+		this.registerEditorExtension(createTaskEnterExtension(this));
 		this.refreshTaskEditModeExtension();
 		this.applyPinkSidebarSetting();
 		this.addSettingTab(new OfficeFlowSettingTab(this.app, this));
@@ -128,6 +138,25 @@ export default class OfficeFlowPlugin extends Plugin {
 			},
 		});
 
+		// The setting gates the command, so the hotkey is inert while "Shift+Enter for new tasks" is off.
+		this.addCommand({
+			id: 'insert-task-checkbox',
+			name: 'Insert task checkbox',
+			hotkeys: [{ modifiers: ['Shift'], key: 'Enter' }],
+			editorCheckCallback: (checking: boolean, editor: Editor, ctx: MarkdownView | MarkdownFileInfo) => {
+				// Inside a table Obsidian uses Shift+Enter for line breaks; leave that alone.
+				if (!this.settings.enableShiftEnterTasks || isInTableCell(ctx)) {
+					return false;
+				}
+
+				if (!checking) {
+					insertTaskCheckbox(editor);
+				}
+
+				return true;
+			},
+		});
+
 		this.addCommand({
 			id: 'open-home-note',
 			name: 'Open Home note',
@@ -150,7 +179,7 @@ export default class OfficeFlowPlugin extends Plugin {
 				return;
 			}
 
-			void renderOfficeProgressBlock(this, source, el, ctx.sourcePath);
+			ctx.addChild(new OfficeProgressBlock(this, source, el, ctx.sourcePath));
 		});
 
 		this.registerEvent(
@@ -380,6 +409,18 @@ class OfficeFlowSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName('Shift+Enter for new tasks')
+			.setDesc(
+				'Shift+Enter inserts a task ("Insert task checkbox"; change the key under Settings → Hotkeys) and Enter on a task line only breaks the line. Off: Enter continues the list as in plain Obsidian.',
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.enableShiftEnterTasks).onChange(async (value) => {
+					this.plugin.settings.enableShiftEnterTasks = value;
+					await this.plugin.saveSettings();
+				}),
+			);
+
+		new Setting(containerEl)
 			.setName('Home button')
 			.setDesc('Show the Home action in Markdown view headers.')
 			.addToggle((toggle) =>
@@ -527,6 +568,11 @@ function normalizeFileSuffix(value: unknown): string {
 	return typeof value === 'string' ? value.trim().replace(/[\\/:*?"<>|]/g, '') : '';
 }
 
+/** Obsidian flags the editor context while the cursor sits in a Live Preview table cell. */
+function isInTableCell(ctx: unknown): boolean {
+	return (ctx as { inTableCell?: boolean } | null)?.inTableCell === true;
+}
+
 function normalizeCategories(value: unknown): string[] {
 	const source = Array.isArray(value) ? value : [];
 
@@ -562,10 +608,6 @@ function createEmptyLineCleanupExtension(): Extension {
 	return Prec.highest(
 		keymap.of([
 			{
-				key: 'Enter',
-				run: insertTaskAfterFollowingPenNotes,
-			},
-			{
 				key: 'Backspace',
 				run: deleteEmptyInsertedLine,
 			},
@@ -573,7 +615,28 @@ function createEmptyLineCleanupExtension(): Extension {
 	);
 }
 
-function insertTaskAfterFollowingPenNotes(view: EditorView): boolean {
+/** Always installed; the handler checks the setting on every keypress, so toggling needs no reload. */
+function createTaskEnterExtension(plugin: OfficeFlowPlugin): Extension {
+	return Prec.highest(
+		keymap.of([
+			{
+				key: 'Enter',
+				run: (view) => breakLineOnTask(view, plugin),
+			},
+		]),
+	);
+}
+
+/**
+ * With "Shift+Enter for new tasks" on, plain Enter on a task line only breaks the line instead of
+ * letting Obsidian continue the list with another checkbox. An empty task line loses its marker,
+ * as it does in plain Obsidian.
+ */
+function breakLineOnTask(view: EditorView, plugin: OfficeFlowPlugin): boolean {
+	if (!plugin.settings.enableShiftEnterTasks) {
+		return false;
+	}
+
 	const selection = view.state.selection.main;
 
 	if (!selection.empty) {
@@ -581,32 +644,25 @@ function insertTaskAfterFollowingPenNotes(view: EditorView): boolean {
 	}
 
 	const line = view.state.doc.lineAt(selection.head);
-	const match = UNFINISHED_TASK_LINE.exec(line.text);
 
-	if (!match) {
+	if (!TASK_LINE.test(line.text)) {
 		return false;
 	}
 
-	const insertedLine = line.text.startsWith('\t') ? INSERTED_TASK_LINE : INSERTED_TOP_LEVEL_TASK_LINE;
-	const insertAfterLine = getLastFollowingPenNoteLine(view, line);
-
-	if (insertAfterLine.number === line.number) {
-		return false;
+	if (EMPTY_ANY_TASK_LINE.test(line.text)) {
+		view.dispatch({
+			changes: { from: line.from, to: line.to, insert: '' },
+			selection: { anchor: line.from },
+			userEvent: 'delete',
+		});
+		return true;
 	}
-
-	const insertedText = `\n${insertedLine}`;
-	const cursorPosition = insertAfterLine.to + insertedText.length;
 
 	view.dispatch({
-		changes: {
-			from: insertAfterLine.to,
-			insert: insertedText,
-		},
-		selection: {
-			anchor: cursorPosition,
-		},
+		changes: { from: selection.head, insert: '\n' },
+		selection: { anchor: selection.head + 1 },
+		userEvent: 'input',
 	});
-
 	return true;
 }
 
@@ -935,6 +991,35 @@ function getLastFollowingPenNoteEditorLine(editor: Editor, lineNumber: number): 
 	return lastLineNumber;
 }
 
+/**
+ * "Insert task checkbox" command: an empty line becomes `- [ ] `; any other line gets a new
+ * `- [ ] ` line below it (after a task's pen notes), keeping the current indent.
+ */
+function insertTaskCheckbox(editor: Editor): void {
+	const cursor = editor.getCursor();
+	const currentLine = editor.getLine(cursor.line);
+	const indent = /^[\t ]*/.exec(currentLine)?.[0] ?? '';
+	const taskLine = `${indent}${INSERTED_TOP_LEVEL_TASK_LINE}`;
+
+	if (currentLine.trim() === '') {
+		editor.replaceRange(
+			taskLine,
+			{ line: cursor.line, ch: 0 },
+			{ line: cursor.line, ch: currentLine.length },
+		);
+		editor.setCursor({ line: cursor.line, ch: taskLine.length });
+		return;
+	}
+
+	const insertLine = UNFINISHED_TASK_LINE.test(currentLine)
+		? getLastFollowingPenNoteEditorLine(editor, cursor.line)
+		: cursor.line;
+	const insertLineText = editor.getLine(insertLine);
+
+	editor.replaceRange(`\n${taskLine}`, { line: insertLine, ch: insertLineText.length });
+	editor.setCursor({ line: insertLine + 1, ch: taskLine.length });
+}
+
 interface HeadingRange {
 	name: string;
 	level: number;
@@ -953,16 +1038,22 @@ interface ProgressCounts {
 	total: number;
 }
 
+/** How a section name is compared with heading text. All modes ignore case. */
+type SectionMatchMode = 'exact' | 'prefix' | 'contains';
+
 interface ProgressTarget {
 	noteName: string | null;
 	noteDisplayName: string | null;
+	/** The name to look for, without the colon markers that select prefix or contains matching. */
 	sectionName: string;
+	matchMode: SectionMatchMode;
 	displayName: string;
 }
 
 interface ProgressCardData extends ProgressCounts {
 	sectionName: string;
 	targetSectionName: string;
+	matchMode: SectionMatchMode;
 	noteName: string | null;
 	noteDisplayName: string | null;
 	percent: number;
@@ -980,10 +1071,15 @@ interface SectionBody {
 
 interface ProgressBlockContext {
 	plugin: OfficeFlowPlugin;
-	source: string;
+	block: OfficeProgressBlock;
 	containerEl: HTMLElement;
 	sourcePath: string;
 	restoreTarget: ProgressTarget | null;
+}
+
+interface ProgressBlockState {
+	/** null when the note holding the block could not be read. */
+	cards: ProgressCardData[] | null;
 }
 
 type ProgressActionKind = 'archive' | 'restore';
@@ -997,65 +1093,234 @@ type ProgressBadgeState = 'percent' | 'armed' | 'holding' | 'busy';
 
 class OfficeFlowActionError extends Error {}
 
-async function renderOfficeProgressBlock(
-	plugin: OfficeFlowPlugin,
-	source: string,
-	containerEl: HTMLElement,
-	sourcePath: string,
-): Promise<void> {
-	const app = plugin.app;
-	containerEl.empty();
+/**
+ * One office-progress code block. It re-reads the tracked notes and repaints itself whenever one
+ * of them changes: at once for notes open in an editor, on save for the rest. A repaint waits
+ * while the badge's archive / restore gesture is in progress and is skipped when nothing changed.
+ */
+class OfficeProgressBlock extends MarkdownRenderChild {
+	private readonly targets: ProgressTarget[];
+	private readonly restoreTarget: ProgressTarget | null;
+	private watchedPaths: Set<string>;
+	private hasMissingNote = false;
+	private refreshTimer: number | null = null;
+	private refreshing = false;
+	private refreshQueued = false;
+	private forceQueued = false;
+	private badgeActive = false;
+	private lastSnapshot: string | null = null;
 
-	const targets = parseProgressTargets(source);
-
-	if (targets.length === 0) {
-		renderProgressMessage(containerEl, 'Add section names inside this office-progress block.');
-		return;
+	constructor(
+		private readonly plugin: OfficeFlowPlugin,
+		source: string,
+		containerEl: HTMLElement,
+		private readonly sourcePath: string,
+	) {
+		super(containerEl);
+		this.targets = parseProgressTargets(source);
+		this.restoreTarget = parseRestoreTarget(source);
+		this.watchedPaths = this.resolveWatchedPaths();
 	}
 
-	const file = app.vault.getAbstractFileByPath(sourcePath);
+	onload(): void {
+		const { vault, workspace } = this.plugin.app;
 
-	if (!(file instanceof TFile)) {
-		renderProgressMessage(containerEl, 'Office Flow could not read this note.');
-		return;
-	}
-
-	const currentMarkdown = await app.vault.cachedRead(file);
-	const cards: ProgressCardData[] = [];
-
-	for (const target of targets) {
-		const markdown = await readProgressTargetMarkdown(
-			app,
-			target,
-			sourcePath,
-			currentMarkdown,
+		this.registerEvent(vault.on('modify', (file) => this.onPathChanged(file.path)));
+		this.registerEvent(vault.on('delete', (file) => this.onPathChanged(file.path)));
+		this.registerEvent(
+			vault.on('rename', (file, oldPath) => {
+				this.onPathChanged(oldPath);
+				this.onPathChanged(file.path);
+			}),
 		);
-		cards.push(calculateProgressCard(target, markdown, markdown !== null));
+		this.registerEvent(
+			vault.on('create', () => {
+				if (this.hasMissingNote) {
+					this.scheduleRefresh();
+				}
+			}),
+		);
+		this.registerEvent(
+			workspace.on('editor-change', (_editor, info) => {
+				const path = info.file?.path;
+
+				if (path) {
+					this.onPathChanged(path);
+				}
+			}),
+		);
+
+		void this.refresh(true);
 	}
 
-	renderProgressCards(
-		{ plugin, source, containerEl, sourcePath, restoreTarget: parseRestoreTarget(source) },
-		cards,
-	);
+	onunload(): void {
+		this.clearTimer();
+	}
+
+	/** The badge reports its gesture state so a repaint never interrupts a hold. */
+	setBadgeActive(active: boolean): void {
+		this.badgeActive = active;
+
+		if (!active && this.refreshQueued) {
+			this.scheduleRefresh();
+		}
+	}
+
+	/** Recompute the cards; repaint when something changed, or always when forced. */
+	async refresh(force: boolean): Promise<void> {
+		if (!force && this.badgeActive) {
+			this.refreshQueued = true;
+			return;
+		}
+
+		if (this.refreshing) {
+			this.refreshQueued = true;
+			this.forceQueued = this.forceQueued || force;
+			return;
+		}
+
+		this.refreshing = true;
+		this.refreshQueued = false;
+
+		try {
+			const state = await this.collect();
+			const snapshot = JSON.stringify(state);
+
+			if (force || snapshot !== this.lastSnapshot) {
+				this.lastSnapshot = snapshot;
+				this.badgeActive = false;
+				this.paint(state);
+			}
+		} finally {
+			this.refreshing = false;
+
+			if (this.refreshQueued) {
+				const queuedForce = this.forceQueued;
+				this.refreshQueued = false;
+				this.forceQueued = false;
+
+				if (queuedForce) {
+					void this.refresh(true);
+				} else {
+					this.scheduleRefresh();
+				}
+			}
+		}
+	}
+
+	private onPathChanged(path: string): void {
+		if (this.watchedPaths.has(path)) {
+			this.scheduleRefresh();
+		}
+	}
+
+	private scheduleRefresh(): void {
+		if (this.badgeActive) {
+			this.refreshQueued = true;
+			return;
+		}
+
+		this.refreshQueued = false;
+		this.clearTimer();
+		this.refreshTimer = window.setTimeout(() => {
+			this.refreshTimer = null;
+			void this.refresh(false);
+		}, PROGRESS_REFRESH_DELAY_MS);
+	}
+
+	private clearTimer(): void {
+		if (this.refreshTimer !== null) {
+			window.clearTimeout(this.refreshTimer);
+			this.refreshTimer = null;
+		}
+	}
+
+	private resolveWatchedPaths(): Set<string> {
+		const paths = new Set<string>([this.sourcePath]);
+
+		for (const target of this.targets) {
+			if (target.noteName === null) {
+				continue;
+			}
+
+			const file = this.plugin.app.metadataCache.getFirstLinkpathDest(target.noteName, this.sourcePath);
+
+			if (file) {
+				paths.add(file.path);
+			}
+		}
+
+		return paths;
+	}
+
+	private async collect(): Promise<ProgressBlockState> {
+		const app = this.plugin.app;
+		this.watchedPaths = this.resolveWatchedPaths();
+		const currentMarkdown = await readLatestMarkdown(app, this.sourcePath);
+
+		if (currentMarkdown === null) {
+			this.hasMissingNote = true;
+			return { cards: null };
+		}
+
+		const cards: ProgressCardData[] = [];
+
+		for (const target of this.targets) {
+			const markdown =
+				target.noteName === null
+					? currentMarkdown
+					: await readLinkedMarkdown(app, target.noteName, this.sourcePath);
+			cards.push(calculateProgressCard(target, markdown, markdown !== null));
+		}
+
+		this.hasMissingNote = cards.some((card) => !card.sourceFound);
+		return { cards };
+	}
+
+	private paint(state: ProgressBlockState): void {
+		const { containerEl } = this;
+		containerEl.empty();
+
+		if (this.targets.length === 0) {
+			renderProgressMessage(containerEl, 'Add section names inside this office-progress block.');
+			return;
+		}
+
+		if (state.cards === null) {
+			renderProgressMessage(containerEl, 'Office Flow could not read this note.');
+			return;
+		}
+
+		renderProgressCards(
+			{
+				plugin: this.plugin,
+				block: this,
+				containerEl,
+				sourcePath: this.sourcePath,
+				restoreTarget: this.restoreTarget,
+			},
+			state.cards,
+		);
+	}
 }
 
-async function readProgressTargetMarkdown(
-	app: App,
-	target: ProgressTarget,
-	sourcePath: string,
-	currentMarkdown: string,
-): Promise<string | null> {
-	if (target.noteName === null) {
-		return currentMarkdown;
+/** The freshest text of a note: an open editor if there is one, otherwise the saved file. */
+async function readLatestMarkdown(app: App, path: string): Promise<string | null> {
+	for (const leaf of app.workspace.getLeavesOfType('markdown')) {
+		const view = leaf.view;
+
+		if (view instanceof MarkdownView && view.file?.path === path) {
+			return view.editor.getValue();
+		}
 	}
 
-	const file = app.metadataCache.getFirstLinkpathDest(target.noteName, sourcePath);
+	const file = app.vault.getAbstractFileByPath(path);
+	return file instanceof TFile ? app.vault.cachedRead(file) : null;
+}
 
-	if (!file) {
-		return null;
-	}
-
-	return app.vault.cachedRead(file);
+async function readLinkedMarkdown(app: App, noteName: string, sourcePath: string): Promise<string | null> {
+	const file = app.metadataCache.getFirstLinkpathDest(noteName, sourcePath);
+	return file ? readLatestMarkdown(app, file.path) : null;
 }
 
 function parseProgressTargets(source: string): ProgressTarget[] {
@@ -1073,7 +1338,7 @@ function parseProgressTargets(source: string): ProgressTarget[] {
 			continue;
 		}
 
-		const key = `${target.noteName ?? 'current'}::${target.sectionName}`.toLowerCase();
+		const key = `${target.noteName ?? 'current'}::${target.matchMode}::${target.sectionName}`.toLowerCase();
 
 		if (seen.has(key)) {
 			continue;
@@ -1094,14 +1359,15 @@ function parseRestoreTarget(source: string): ProgressTarget | null {
 			continue;
 		}
 
-		const target = parseProgressTarget(match[1] ?? '');
+		// Restore lines carry the real heading name, so a trailing colon is part of the name.
+		const target = parseProgressTarget(match[1] ?? '', false);
 		return target && target.noteName !== null ? target : null;
 	}
 
 	return null;
 }
 
-function parseProgressTarget(line: string): ProgressTarget | null {
+function parseProgressTarget(line: string, allowPrefixMarker = true): ProgressTarget | null {
 	const trimmedLine = line.trim();
 
 	if (!trimmedLine) {
@@ -1113,18 +1379,21 @@ function parseProgressTarget(line: string): ProgressTarget | null {
 	const crossNoteMatch = wikiNoteMatch ?? singleNoteMatch;
 
 	if (!crossNoteMatch) {
+		const { sectionName, matchMode } = parseSectionPattern(trimmedLine, allowPrefixMarker);
+
 		return {
 			noteName: null,
 			noteDisplayName: null,
-			sectionName: trimmedLine,
-			displayName: trimmedLine,
+			sectionName,
+			matchMode,
+			displayName: sectionName,
 		};
 	}
 
 	const bracketTarget = wikiNoteMatch ? `[[${crossNoteMatch[1]?.trim() ?? ''}]]` : crossNoteMatch[1]?.trim();
-	const sectionName = crossNoteMatch[2]?.trim();
+	const rawSectionName = crossNoteMatch[2]?.trim();
 
-	if (!bracketTarget || !sectionName) {
+	if (!bracketTarget || !rawSectionName) {
 		return null;
 	}
 
@@ -1134,12 +1403,42 @@ function parseProgressTarget(line: string): ProgressTarget | null {
 		return null;
 	}
 
+	const { sectionName, matchMode } = parseSectionPattern(rawSectionName, allowPrefixMarker);
+
 	return {
 		noteName,
 		noteDisplayName,
 		sectionName,
+		matchMode,
 		displayName: `${noteDisplayName} : ${sectionName}`,
 	};
+}
+
+/**
+ * `todo` matches the heading "todo" only; `todo:` matches every heading that starts with "todo";
+ * `:todo:` matches every heading that contains "todo". Full-width colons (`：`) work the same way.
+ */
+function parseSectionPattern(
+	raw: string,
+	allowPrefixMarker: boolean,
+): { sectionName: string; matchMode: SectionMatchMode } {
+	const trimmed = raw.trim();
+
+	if (allowPrefixMarker) {
+		const containsName = /^[:：]\s*(.+?)\s*[:：]$/.exec(trimmed)?.[1]?.trim();
+
+		if (containsName) {
+			return { sectionName: containsName, matchMode: 'contains' };
+		}
+
+		const prefixName = /^(.+?)\s*[:：]$/.exec(trimmed)?.[1]?.trim();
+
+		if (prefixName) {
+			return { sectionName: prefixName, matchMode: 'prefix' };
+		}
+	}
+
+	return { sectionName: trimmed, matchMode: 'exact' };
 }
 
 function parseProgressNoteTarget(target: string): {
@@ -1173,6 +1472,7 @@ function calculateProgressCard(
 		return {
 			sectionName: target.displayName,
 			targetSectionName: target.sectionName,
+			matchMode: target.matchMode,
 			noteName: target.noteName,
 			noteDisplayName: target.noteDisplayName,
 			completed: 0,
@@ -1186,13 +1486,14 @@ function calculateProgressCard(
 
 	const lines = markdown.split(/\r?\n/);
 	const headings = findHeadings(lines);
-	const ranges = findMatchingHeadingRanges(headings, target.sectionName);
+	const ranges = findMatchingHeadingRanges(headings, target.sectionName, target.matchMode);
 	const counts = countLeafTasksInRanges(lines, ranges);
 	const percent = counts.total === 0 ? 0 : Math.round((counts.completed / counts.total) * 100);
 
 	return {
 		sectionName: target.displayName,
 		targetSectionName: target.sectionName,
+		matchMode: target.matchMode,
 		noteName: target.noteName,
 		noteDisplayName: target.noteDisplayName,
 		completed: counts.completed,
@@ -1268,9 +1569,26 @@ function findHeadings(lines: string[]): HeadingRange[] {
 function findMatchingHeadingRanges(
 	headings: HeadingRange[],
 	sectionName: string,
+	matchMode: SectionMatchMode,
 ): HeadingRange[] {
-	const needle = sectionName.toLowerCase();
-	return headings.filter((heading) => heading.name.toLowerCase().includes(needle));
+	const needle = sectionName.trim().toLowerCase();
+
+	if (!needle) {
+		return [];
+	}
+
+	return headings.filter((heading) => {
+		const name = heading.name.toLowerCase();
+
+		switch (matchMode) {
+			case 'prefix':
+				return name.startsWith(needle);
+			case 'contains':
+				return name.includes(needle);
+			default:
+				return name === needle;
+		}
+	});
 }
 
 function countLeafTasksInRanges(
@@ -1466,13 +1784,13 @@ function resolveProgressAction(
 
 		return {
 			kind: 'restore',
-			run: () => restoreSection(plugin, sourcePath, card.targetSectionName, restoreTarget),
+			run: () => restoreSection(plugin, sourcePath, card.targetSectionName, card.matchMode, restoreTarget),
 		};
 	}
 
 	return {
 		kind: 'archive',
-		run: () => archiveSection(plugin, sourcePath, card.targetSectionName),
+		run: () => archiveSection(plugin, sourcePath, card.targetSectionName, card.matchMode),
 	};
 }
 
@@ -1558,6 +1876,7 @@ function renderProgressBadge(
 		badge.toggleClass('is-armed', next === 'armed' || next === 'holding');
 		badge.toggleClass('is-holding', next === 'holding');
 		badge.toggleClass('is-busy', next === 'busy');
+		context.block.setBadgeActive(next !== 'percent');
 	};
 
 	const disarm = () => {
@@ -1578,12 +1897,7 @@ function renderProgressBadge(
 		try {
 			const message = await action.run();
 			new Notice(message);
-			await renderOfficeProgressBlock(
-				context.plugin,
-				context.source,
-				context.containerEl,
-				context.sourcePath,
-			);
+			await context.block.refresh(true);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			new Notice(`Office Flow: ${message}`);
@@ -1671,11 +1985,12 @@ async function archiveSection(
 	plugin: OfficeFlowPlugin,
 	sourcePath: string,
 	sectionName: string,
+	matchMode: SectionMatchMode,
 ): Promise<string> {
 	const app = plugin.app;
 	const sourceFile = getMarkdownFile(app, sourcePath);
 	const sourceLines = splitLines(await app.vault.read(sourceFile));
-	const range = findUniqueHeadingRange(sourceLines, sectionName);
+	const range = findUniqueHeadingRange(sourceLines, sectionName, matchMode);
 	const body = splitSectionBody(sourceLines, range);
 
 	if (body.content.length === 0) {
@@ -1706,7 +2021,7 @@ async function archiveSection(
 
 	await app.vault.process(sourceFile, (content) => {
 		const lines = splitLines(content);
-		const currentRange = findUniqueHeadingRange(lines, sectionName);
+		const currentRange = findUniqueHeadingRange(lines, sectionName, matchMode);
 		const currentBody = splitSectionBody(lines, currentRange);
 		return joinLines([
 			...lines.slice(0, currentRange.startLine + 1),
@@ -1722,12 +2037,13 @@ async function restoreSection(
 	plugin: OfficeFlowPlugin,
 	archivePath: string,
 	sectionName: string,
+	matchMode: SectionMatchMode,
 	target: ProgressTarget,
 ): Promise<string> {
 	const app = plugin.app;
 	const archiveFile = getMarkdownFile(app, archivePath);
 	const archiveLines = splitLines(await app.vault.read(archiveFile));
-	const range = findUniqueHeadingRange(archiveLines, sectionName);
+	const range = findUniqueHeadingRange(archiveLines, sectionName, matchMode);
 	const body = splitSectionBody(archiveLines, range);
 
 	if (body.content.length === 0) {
@@ -1743,13 +2059,13 @@ async function restoreSection(
 
 	await app.vault.process(sourceFile, (content) => {
 		const lines = splitLines(content);
-		const sourceRange = findUniqueHeadingRange(lines, target.sectionName);
+		const sourceRange = findUniqueHeadingRange(lines, target.sectionName, target.matchMode);
 		return joinLines(insertAtSectionEnd(lines, sourceRange, body.content));
 	});
 
 	await app.vault.process(archiveFile, (content) => {
 		const lines = splitLines(content);
-		const currentRange = findUniqueHeadingRange(lines, sectionName);
+		const currentRange = findUniqueHeadingRange(lines, sectionName, matchMode);
 		return joinLines(removeLineRange(lines, currentRange.startLine, currentRange.endLineExclusive));
 	});
 
@@ -1810,12 +2126,15 @@ async function ensureFolder(app: App, folderPath: string): Promise<void> {
 	}
 }
 
-/** Exact heading name wins; otherwise fall back to the card's substring match. Must be unique. */
-function findUniqueHeadingRange(lines: string[], sectionName: string): HeadingRange {
+/** Exact heading name wins; a prefix or contains pattern then falls back to the card's own matches. Must be unique. */
+function findUniqueHeadingRange(
+	lines: string[],
+	sectionName: string,
+	matchMode: SectionMatchMode,
+): HeadingRange {
 	const headings = findHeadings(lines);
-	const needle = sectionName.trim().toLowerCase();
-	const exact = headings.filter((heading) => heading.name.toLowerCase() === needle);
-	const matches = exact.length > 0 ? exact : findMatchingHeadingRanges(headings, sectionName);
+	const exact = findMatchingHeadingRanges(headings, sectionName, 'exact');
+	const matches = exact.length > 0 ? exact : findMatchingHeadingRanges(headings, sectionName, matchMode);
 	const [match] = matches;
 
 	if (!match) {

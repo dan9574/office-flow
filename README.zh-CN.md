@@ -8,13 +8,24 @@ Office Flow 是一个小而实用的个人 Obsidian 插件，让任务笔记更�
 
 ## 功能
 
+- **Shift+Enter 新建任务**：在任何位置按 Shift+Enter 插入一条任务；任务行上的 Enter 只换行。
 - **任务编辑模式**：每条未完成任务后面有行内按钮，用来插入子任务、🖊 笔记和顶层任务；空任务上还有分类选择器。
-- **进度卡片**：`office-progress` 代码块渲染成进度卡片，统计当前笔记或其他笔记的某个章节。
+- **进度卡片**：`office-progress` 代码块渲染成进度卡片，统计当前笔记或其他笔记的某个章节，任务变化时自动刷新。
 - **归档与还原**：按住卡片上的百分比徽章，把章节下的任务移到当天的归档文件；在归档文件里再按住即可还原。
 - **Home 与收藏按钮**：标题栏两个按钮，分别打开 Home 笔记和收藏笔记。
 - **粉色侧边栏**：可选的柔粉色侧边栏和功能区。
 
 只用 Obsidian 原生 API、TypeScript 和 CSS，没有外部服务，没有额外依赖。
+
+## Shift+Enter 新建任务
+
+不用鼠标，在任何位置按 Shift+Enter 就能开一条任务：
+
+- 空行上：直接输入 `- [ ] `；
+- 任务行上：在下方新建下一条任务，插在该任务的 🖊 笔记之后，保持缩进；
+- 其他行上：在下一行插入 `- [ ] `。
+
+任务行上的普通 Enter 只换行，不再自动出现新的复选框，方便在任务下面写东西；空任务行上按 Enter 会去掉标记，和 Obsidian 一样。这两项行为都由设置里的 *Shift+Enter for new tasks* 控制，默认开启；关掉即可恢复 Obsidian 原本的 Enter。按键属于 `Insert task checkbox` 命令，可在 **设置 → 快捷键** 里修改。
 
 ## 任务编辑模式
 
@@ -29,11 +40,11 @@ Office Flow 是一个小而实用的个人 Obsidian 插件，让任务笔记更�
 | `-`（仅子任务显示） | 一条新的顶层任务（`- [ ] `） |
 | 分类选择器（仅空任务显示） | 四个分类标签之一，作为任务文字 |
 
-🖊 笔记属于它上方的任务，所以新任务会插在任务的笔记行之后，按钮和在任务上按 Enter 都是如此。在空的插入行上按 Backspace 会把这一行删掉。
+🖊 笔记属于它上方的任务，所以新任务会插在任务的笔记行之后，按钮和在任务上按 Shift+Enter 都是如此。在空的插入行上按 Backspace 会把这一行删掉。
 
 四个分类标签默认是 Action、Research、Design、Code，可在设置中修改。
 
-命令：`Toggle task edit mode`、`Insert child task`、`Insert pen note`。
+命令：`Toggle task edit mode`、`Insert child task`、`Insert pen note`、`Insert task checkbox`。
 
 ## 进度卡片
 
@@ -56,7 +67,22 @@ To_do
 ```
 ````
 
-章节指标题文字包含给定名称的标题，范围到下一个同级或更高级标题为止。计数只算叶子任务：有子任务的任务是分组，不算任务。点击跨笔记卡片上的别名会打开那篇笔记。
+章节指标题文字与给定名称完全相同（不区分大小写）的标题，范围到下一个同级或更高级标题为止。名称末尾加一个冒号，则匹配所有以它开头的标题；名称两端各加一个冒号，则匹配所有包含它的标题：
+
+````md
+```office-progress
+todo
+todo:
+:todo:
+[[Home 7_21|Work]] : todo:
+```
+````
+
+`todo` 只统计标题 `todo`；`todo:` 会把 `todo1`、`todo2`、`todo 今天` 合在一起统计；`:todo:` 还会算上 `🌸 todo 🔒` 和 `my todo`。全角冒号（`：`）同样有效，卡片上显示的名称不带冒号。1.3.0 之前，所有名称都按 `:todo:` 的方式匹配。
+
+计数只算叶子任务：有子任务的任务是分组，不算任务。点击跨笔记卡片上的别名会打开那篇笔记。
+
+卡片会自己保持最新：被统计的笔记一有变化，卡片稍后就会重画。笔记在编辑器里打开时立即更新，其他情况在 Obsidian 保存后更新。
 
 ## 归档与还原
 
@@ -97,7 +123,8 @@ restore: [[study/Everyday_Task]] : To_do
 
 | 设置 | 默认值 | 作用 |
 | --- | --- | --- |
-| Task edit mode | 开 | 显示行内任务按钮和 Enter / Backspace 辅助。 |
+| Shift+Enter for new tasks | 开 | Shift+Enter 插入任务（`Insert task checkbox` 命令）；任务行上的 Enter 只换行。 |
+| Task edit mode | 开 | 显示行内任务按钮和 Backspace 辅助。 |
 | Category picker | 开 | 在空任务上显示分类标签。 |
 | Home button | 开 | 在视图标题栏显示 Home 和爱心按钮。 |
 | Office progress blocks | 开 | 渲染 `office-progress` 代码块。 |
@@ -111,14 +138,20 @@ restore: [[study/Everyday_Task]] : To_do
 
 ## 安装
 
+打开 **设置** → **第三方插件** → **浏览**，搜索 **Office Flow** 并安装。之后的新版本会出现在 **第三方插件** → **检查更新** 里。
+
+也可以手动安装：
+
 1. 从最新的 [Release](https://github.com/dan9574/office-flow/releases/latest) 下载 `main.js`、`manifest.json`、`styles.css` 三个文件。
 2. 打开 Obsidian **设置** → **第三方插件** → **已安装插件**，点击 **打开插件文件夹** 图标。
 3. 在这个插件文件夹里新建一个名为 `office-flow` 的文件夹，把三个文件放进去。
 4. 重启 Obsidian，回到 **第三方插件** 设置页并启用 **Office Flow**。
 
-插件上架社区目录后，也可以直接在 **第三方插件** → **浏览** 里搜索安装。
-
 任务按钮需要 Obsidian 的编辑模式（实时预览或源码模式）。进度卡片在阅读模式下也能渲染，也能在其他渲染 Markdown 的插件里显示，例如 Always-on-Top Tasks。
+
+## 反馈与联系
+
+有任何想法、建议或 bug，欢迎写信给作者：danielnaibuluo@gmail.com，也可以在 GitHub 提 issue。我会回复，好的想法可能会变成新功能。
 
 ## 开发
 

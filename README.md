@@ -8,13 +8,24 @@ Office Flow is a small personal Obsidian plugin for faster task notes and a soft
 
 ## Features
 
+- **Shift+Enter for new tasks**: Shift+Enter inserts a task wherever you are; plain Enter on a task only breaks the line.
 - **Task edit mode**: inline buttons after every unfinished task for child tasks, pen notes and top-level tasks, plus a category picker for empty tasks.
-- **Progress cards**: `office-progress` code blocks render a progress card for a section of the current note or of another note.
+- **Progress cards**: `office-progress` code blocks render a progress card for a section of the current note or of another note, and keep it up to date as the tasks change.
 - **Archive and restore**: hold a card's percent badge to move the section's tasks into today's archive file, and hold again there to bring them back.
 - **Home and favorite buttons**: two header actions that open your Home note and a favorite note.
 - **Pink sidebar**: optional soft pink sidebars and ribbons.
 
 Plain Obsidian API, TypeScript and CSS. No external services, no extra libraries.
+
+## Shift+Enter for new tasks
+
+Shift+Enter starts a task wherever you are, without the mouse:
+
+- on an empty line it types `- [ ] `;
+- on a task it adds the next task below, after the task's pen notes, with the same indent;
+- on any other line it adds a `- [ ] ` line below.
+
+Plain Enter on a task line just breaks the line, so you can write under a task without getting another checkbox; on an empty task line it removes the marker, as Obsidian does. Both behaviours belong to the *Shift+Enter for new tasks* setting, which is on by default; switch it off to get Obsidian's usual Enter back. The key is the `Insert task checkbox` command's hotkey and can be changed under **Settings → Hotkeys**.
 
 ## Task edit mode
 
@@ -29,11 +40,11 @@ In editing mode every unfinished task (`- [ ]`) gets small buttons right after t
 | `-` (child tasks only) | a new top-level task (`- [ ] `) |
 | category picker (empty tasks only) | one of four labels as the task text |
 
-Pen notes belong to the task above them, so new tasks are inserted after a task's pen notes, both from the buttons and when you press Enter on the task. Backspace on an empty inserted line removes that line again.
+Pen notes belong to the task above them, so new tasks are inserted after a task's pen notes, both from the buttons and with Shift+Enter on the task. Backspace on an empty inserted line removes that line again.
 
 The four category labels default to Action, Research, Design and Code and can be changed in settings.
 
-Commands: `Toggle task edit mode`, `Insert child task`, `Insert pen note`.
+Commands: `Toggle task edit mode`, `Insert child task`, `Insert pen note`, `Insert task checkbox`.
 
 ## Progress cards
 
@@ -56,7 +67,22 @@ A section of another note, optionally with an alias that becomes the card title:
 ```
 ````
 
-A section is a heading whose text contains the given name, up to the next heading of the same or a higher level. The counter counts leaf tasks: a task that has child tasks is a group, not a task. Clicking the alias on a cross-note card opens that note.
+A section is a heading whose text equals the given name (ignoring case), up to the next heading of the same or a higher level. End the name with a colon to match every heading that starts with it, or wrap it in colons to match every heading that contains it:
+
+````md
+```office-progress
+todo
+todo:
+:todo:
+[[Home 7_21|Work]] : todo:
+```
+````
+
+`todo` counts only the `todo` heading; `todo:` counts `todo1`, `todo2` and `todo today` together; `:todo:` also counts `🌸 todo 🔒` and `my todo`. Full-width colons (`：`) work too, and the card shows the name without them. Before 1.3.0 every name behaved like `:todo:`.
+
+The counter counts leaf tasks: a task that has child tasks is a group, not a task. Clicking the alias on a cross-note card opens that note.
+
+Cards keep themselves up to date: when a tracked note changes, the card repaints a moment later, right away for notes open in an editor and as soon as Obsidian saves for the rest.
 
 ## Archive and restore
 
@@ -97,7 +123,8 @@ Turns the left and right sidebars and ribbons a soft pink. Just a toggle.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Task edit mode | on | Show the inline task buttons and the Enter / Backspace helpers. |
+| Shift+Enter for new tasks | on | Shift+Enter inserts a task (the `Insert task checkbox` command); Enter on a task line only breaks the line. |
+| Task edit mode | on | Show the inline task buttons and the Backspace helper. |
 | Category picker | on | Show the category labels on empty tasks. |
 | Home button | on | Show the Home and heart actions in view headers. |
 | Office progress blocks | on | Render `office-progress` code blocks. |
@@ -111,14 +138,20 @@ Turns the left and right sidebars and ribbons a soft pink. Just a toggle.
 
 ## Installation
 
+Open **Settings** → **Community plugins** → **Browse**, search for **Office Flow** and install it. Later versions show up under **Community plugins** → **Check for updates**.
+
+To install by hand instead:
+
 1. Download `main.js`, `manifest.json` and `styles.css` from the latest [release](https://github.com/dan9574/office-flow/releases/latest).
 2. In Obsidian open **Settings** → **Community plugins** → **Installed plugins** and click the **Open plugins folder** icon.
 3. Create a folder named `office-flow` inside that plugins folder and put the three files in it.
 4. Restart Obsidian, go back to **Community plugins** and enable **Office Flow**.
 
-Once the plugin is listed in the community directory you can install it from **Community plugins** → **Browse** instead.
-
 The task buttons need Obsidian's editing mode (Live Preview or source). Progress cards also render in reading mode and inside other plugins that render Markdown, such as Always-on-Top Tasks.
+
+## Feedback
+
+Ideas, suggestions or a bug? Write to the author at danielnaibuluo@gmail.com, or open an issue on GitHub. I reply, and good ideas may turn into new features.
 
 ## Development
 
