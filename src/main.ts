@@ -1014,13 +1014,13 @@ interface ProgressCounts {
 	total: number;
 }
 
-/** How a section name is compared with heading text. Both modes ignore case. */
-type SectionMatchMode = 'exact' | 'prefix';
+/** How a section name is compared with heading text. All modes ignore case. */
+type SectionMatchMode = 'exact' | 'prefix' | 'contains';
 
 interface ProgressTarget {
 	noteName: string | null;
 	noteDisplayName: string | null;
-	/** The name to look for, without the trailing colon that selects prefix matching. */
+	/** The name to look for, without the colon markers that select prefix or contains matching. */
 	sectionName: string;
 	matchMode: SectionMatchMode;
 	displayName: string;
@@ -1216,17 +1216,28 @@ function parseProgressTarget(line: string, allowPrefixMarker = true): ProgressTa
 	};
 }
 
-/** `todo` matches the heading "todo" only; `todo:` (or the full-width `todo：`) matches every heading that starts with "todo". */
+/**
+ * `todo` matches the heading "todo" only; `todo:` matches every heading that starts with "todo";
+ * `:todo:` matches every heading that contains "todo". Full-width colons (`：`) work the same way.
+ */
 function parseSectionPattern(
 	raw: string,
 	allowPrefixMarker: boolean,
 ): { sectionName: string; matchMode: SectionMatchMode } {
 	const trimmed = raw.trim();
-	const prefixMatch = allowPrefixMarker ? /^(.+?)\s*[:：]$/.exec(trimmed) : null;
-	const prefixName = prefixMatch?.[1]?.trim();
 
-	if (prefixName) {
-		return { sectionName: prefixName, matchMode: 'prefix' };
+	if (allowPrefixMarker) {
+		const containsName = /^[:：]\s*(.+?)\s*[:：]$/.exec(trimmed)?.[1]?.trim();
+
+		if (containsName) {
+			return { sectionName: containsName, matchMode: 'contains' };
+		}
+
+		const prefixName = /^(.+?)\s*[:：]$/.exec(trimmed)?.[1]?.trim();
+
+		if (prefixName) {
+			return { sectionName: prefixName, matchMode: 'prefix' };
+		}
 	}
 
 	return { sectionName: trimmed, matchMode: 'exact' };
@@ -1370,7 +1381,15 @@ function findMatchingHeadingRanges(
 
 	return headings.filter((heading) => {
 		const name = heading.name.toLowerCase();
-		return matchMode === 'prefix' ? name.startsWith(needle) : name === needle;
+
+		switch (matchMode) {
+			case 'prefix':
+				return name.startsWith(needle);
+			case 'contains':
+				return name.includes(needle);
+			default:
+				return name === needle;
+		}
 	});
 }
 
@@ -1913,7 +1932,7 @@ async function ensureFolder(app: App, folderPath: string): Promise<void> {
 	}
 }
 
-/** Exact heading name wins; a prefix pattern then falls back to the card's prefix matches. Must be unique. */
+/** Exact heading name wins; a prefix or contains pattern then falls back to the card's own matches. Must be unique. */
 function findUniqueHeadingRange(
 	lines: string[],
 	sectionName: string,

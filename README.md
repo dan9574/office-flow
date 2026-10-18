@@ -58,17 +58,18 @@ A section of another note, optionally with an alias that becomes the card title:
 ```
 ````
 
-A section is a heading whose text equals the given name (ignoring case), up to the next heading of the same or a higher level. End the name with a colon to match every heading that starts with it instead:
+A section is a heading whose text equals the given name (ignoring case), up to the next heading of the same or a higher level. End the name with a colon to match every heading that starts with it, or wrap it in colons to match every heading that contains it:
 
 ````md
 ```office-progress
 todo
 todo:
+:todo:
 [[Home 7_21|Work]] : todo:
 ```
 ````
 
-`todo` counts only the `todo` heading; `todo:` (a full-width `：` works too) counts `todo1`, `todo2` and `todo today` together, and the card shows the name without the colon. Before 1.2.6 a name matched every heading that merely contained it.
+`todo` counts only the `todo` heading; `todo:` counts `todo1`, `todo2` and `todo today` together; `:todo:` also counts `🌸 todo 🔒` and `my todo`. Full-width colons (`：`) work too, and the card shows the name without them. Before 1.2.6 every name behaved like `:todo:`.
 
 The counter counts leaf tasks: a task that has child tasks is a group, not a task. Clicking the alias on a cross-note card opens that note.
 
