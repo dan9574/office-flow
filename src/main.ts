@@ -11,6 +11,8 @@ import {
 import {
 	App,
 	Editor,
+	MarkdownFileInfo,
+	MarkdownRenderChild,
 	MarkdownView,
 	Notice,
 	Plugin,
@@ -26,6 +28,9 @@ import {
 
 const UNFINISHED_TASK_LINE = /^(\t?)- \[ \]/;
 const EMPTY_TASK_LINE = /^(\t?- \[ \])\s*$/;
+/** Any task line, done or not, at any indent: where plain Enter must not continue the list. */
+const TASK_LINE = /^[\t ]*- \[[ xX]\]/;
+const EMPTY_ANY_TASK_LINE = /^[\t ]*- \[[ xX]\]\s*$/;
 const PEN_NOTE_LINE = /^\s*🖊/;
 const EMPTY_INSERTED_LINE = /^(?:\t?- \[ \] ?|\t?🖊 ?)$/;
 const INSERTED_TOP_LEVEL_TASK_LINE = '- [ ] ';
@@ -40,6 +45,8 @@ const DEFAULT_ARCHIVE_FILE_SUFFIX = 'temp_todo';
 /** Keep in sync with the ring transition duration in styles.css. */
 const ARCHIVE_HOLD_MS = 2000;
 const ARCHIVE_ARM_TIMEOUT_MS = 5000;
+/** Progress cards repaint this long after the last change to a tracked note. */
+const PROGRESS_REFRESH_DELAY_MS = 300;
 const OFFICE_PROGRESS_FENCE_LINE = /^\s*(?:```+|~~~+)\s*office-progress\s*$/i;
 const RESTORE_TARGET_LINE = /^restore\s*:\s*(.+)$/i;
 
@@ -47,7 +54,7 @@ interface OfficeFlowSettings {
 	homeNote: string;
 	enableTaskEditMode: boolean;
 	enableCategoryPicker: boolean;
-	enableInsertTaskHotkey: boolean;
+	enableShiftEnterTasks: boolean;
 	enableHomeButton: boolean;
 	enableOfficeProgressBlocks: boolean;
 	enablePinkSidebar: boolean;
@@ -62,7 +69,7 @@ const DEFAULT_SETTINGS: OfficeFlowSettings = {
 	homeNote: 'Home',
 	enableTaskEditMode: true,
 	enableCategoryPicker: true,
-	enableInsertTaskHotkey: false,
+	enableShiftEnterTasks: true,
 	enableHomeButton: true,
 	enableOfficeProgressBlocks: true,
 	enablePinkSidebar: true,
@@ -88,6 +95,7 @@ export default class OfficeFlowPlugin extends Plugin {
 		this.taskEditModeEnabled = this.settings.enableTaskEditMode;
 
 		this.registerEditorExtension(this.editorExtensions);
+		this.registerEditorExtension(createTaskEnterExtension(this));
 		this.refreshTaskEditModeExtension();
 		this.applyPinkSidebarSetting();
 		this.addSettingTab(new OfficeFlowSettingTab(this.app, this));
@@ -130,13 +138,14 @@ export default class OfficeFlowPlugin extends Plugin {
 			},
 		});
 
-		// Opt-in: the setting gates the command so the hotkey stays inert until the user wants it.
+		// The setting gates the command, so the hotkey is inert while "Shift+Enter for new tasks" is off.
 		this.addCommand({
 			id: 'insert-task-checkbox',
 			name: 'Insert task checkbox',
-			hotkeys: [{ modifiers: ['Alt'], key: 'Enter' }],
-			editorCheckCallback: (checking: boolean, editor: Editor) => {
-				if (!this.settings.enableInsertTaskHotkey) {
+			hotkeys: [{ modifiers: ['Shift'], key: 'Enter' }],
+			editorCheckCallback: (checking: boolean, editor: Editor, ctx: MarkdownView | MarkdownFileInfo) => {
+				// Inside a table Obsidian uses Shift+Enter for line breaks; leave that alone.
+				if (!this.settings.enableShiftEnterTasks || isInTableCell(ctx)) {
 					return false;
 				}
 
@@ -170,7 +179,7 @@ export default class OfficeFlowPlugin extends Plugin {
 				return;
 			}
 
-			void renderOfficeProgressBlock(this, source, el, ctx.sourcePath);
+			ctx.addChild(new OfficeProgressBlock(this, source, el, ctx.sourcePath));
 		});
 
 		this.registerEvent(
@@ -400,13 +409,13 @@ class OfficeFlowSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName('Insert task hotkey')
+			.setName('Shift+Enter for new tasks')
 			.setDesc(
-				'Enable the "Insert task checkbox" command: Alt+Enter turns an empty line into "- [ ] " or starts a new task below the current line. Change the key under Settings → Hotkeys.',
+				'Shift+Enter inserts a task ("Insert task checkbox"; change the key under Settings → Hotkeys) and Enter on a task line only breaks the line. Off: Enter continues the list as in plain Obsidian.',
 			)
 			.addToggle((toggle) =>
-				toggle.setValue(this.plugin.settings.enableInsertTaskHotkey).onChange(async (value) => {
-					this.plugin.settings.enableInsertTaskHotkey = value;
+				toggle.setValue(this.plugin.settings.enableShiftEnterTasks).onChange(async (value) => {
+					this.plugin.settings.enableShiftEnterTasks = value;
 					await this.plugin.saveSettings();
 				}),
 			);
@@ -559,6 +568,11 @@ function normalizeFileSuffix(value: unknown): string {
 	return typeof value === 'string' ? value.trim().replace(/[\\/:*?"<>|]/g, '') : '';
 }
 
+/** Obsidian flags the editor context while the cursor sits in a Live Preview table cell. */
+function isInTableCell(ctx: unknown): boolean {
+	return (ctx as { inTableCell?: boolean } | null)?.inTableCell === true;
+}
+
 function normalizeCategories(value: unknown): string[] {
 	const source = Array.isArray(value) ? value : [];
 
@@ -594,10 +608,6 @@ function createEmptyLineCleanupExtension(): Extension {
 	return Prec.highest(
 		keymap.of([
 			{
-				key: 'Enter',
-				run: insertTaskAfterFollowingPenNotes,
-			},
-			{
 				key: 'Backspace',
 				run: deleteEmptyInsertedLine,
 			},
@@ -605,7 +615,28 @@ function createEmptyLineCleanupExtension(): Extension {
 	);
 }
 
-function insertTaskAfterFollowingPenNotes(view: EditorView): boolean {
+/** Always installed; the handler checks the setting on every keypress, so toggling needs no reload. */
+function createTaskEnterExtension(plugin: OfficeFlowPlugin): Extension {
+	return Prec.highest(
+		keymap.of([
+			{
+				key: 'Enter',
+				run: (view) => breakLineOnTask(view, plugin),
+			},
+		]),
+	);
+}
+
+/**
+ * With "Shift+Enter for new tasks" on, plain Enter on a task line only breaks the line instead of
+ * letting Obsidian continue the list with another checkbox. An empty task line loses its marker,
+ * as it does in plain Obsidian.
+ */
+function breakLineOnTask(view: EditorView, plugin: OfficeFlowPlugin): boolean {
+	if (!plugin.settings.enableShiftEnterTasks) {
+		return false;
+	}
+
 	const selection = view.state.selection.main;
 
 	if (!selection.empty) {
@@ -613,32 +644,25 @@ function insertTaskAfterFollowingPenNotes(view: EditorView): boolean {
 	}
 
 	const line = view.state.doc.lineAt(selection.head);
-	const match = UNFINISHED_TASK_LINE.exec(line.text);
 
-	if (!match) {
+	if (!TASK_LINE.test(line.text)) {
 		return false;
 	}
 
-	const insertedLine = line.text.startsWith('\t') ? INSERTED_TASK_LINE : INSERTED_TOP_LEVEL_TASK_LINE;
-	const insertAfterLine = getLastFollowingPenNoteLine(view, line);
-
-	if (insertAfterLine.number === line.number) {
-		return false;
+	if (EMPTY_ANY_TASK_LINE.test(line.text)) {
+		view.dispatch({
+			changes: { from: line.from, to: line.to, insert: '' },
+			selection: { anchor: line.from },
+			userEvent: 'delete',
+		});
+		return true;
 	}
-
-	const insertedText = `\n${insertedLine}`;
-	const cursorPosition = insertAfterLine.to + insertedText.length;
 
 	view.dispatch({
-		changes: {
-			from: insertAfterLine.to,
-			insert: insertedText,
-		},
-		selection: {
-			anchor: cursorPosition,
-		},
+		changes: { from: selection.head, insert: '\n' },
+		selection: { anchor: selection.head + 1 },
+		userEvent: 'input',
 	});
-
 	return true;
 }
 
@@ -1047,10 +1071,15 @@ interface SectionBody {
 
 interface ProgressBlockContext {
 	plugin: OfficeFlowPlugin;
-	source: string;
+	block: OfficeProgressBlock;
 	containerEl: HTMLElement;
 	sourcePath: string;
 	restoreTarget: ProgressTarget | null;
+}
+
+interface ProgressBlockState {
+	/** null when the note holding the block could not be read. */
+	cards: ProgressCardData[] | null;
 }
 
 type ProgressActionKind = 'archive' | 'restore';
@@ -1064,65 +1093,234 @@ type ProgressBadgeState = 'percent' | 'armed' | 'holding' | 'busy';
 
 class OfficeFlowActionError extends Error {}
 
-async function renderOfficeProgressBlock(
-	plugin: OfficeFlowPlugin,
-	source: string,
-	containerEl: HTMLElement,
-	sourcePath: string,
-): Promise<void> {
-	const app = plugin.app;
-	containerEl.empty();
+/**
+ * One office-progress code block. It re-reads the tracked notes and repaints itself whenever one
+ * of them changes: at once for notes open in an editor, on save for the rest. A repaint waits
+ * while the badge's archive / restore gesture is in progress and is skipped when nothing changed.
+ */
+class OfficeProgressBlock extends MarkdownRenderChild {
+	private readonly targets: ProgressTarget[];
+	private readonly restoreTarget: ProgressTarget | null;
+	private watchedPaths: Set<string>;
+	private hasMissingNote = false;
+	private refreshTimer: number | null = null;
+	private refreshing = false;
+	private refreshQueued = false;
+	private forceQueued = false;
+	private badgeActive = false;
+	private lastSnapshot: string | null = null;
 
-	const targets = parseProgressTargets(source);
-
-	if (targets.length === 0) {
-		renderProgressMessage(containerEl, 'Add section names inside this office-progress block.');
-		return;
+	constructor(
+		private readonly plugin: OfficeFlowPlugin,
+		source: string,
+		containerEl: HTMLElement,
+		private readonly sourcePath: string,
+	) {
+		super(containerEl);
+		this.targets = parseProgressTargets(source);
+		this.restoreTarget = parseRestoreTarget(source);
+		this.watchedPaths = this.resolveWatchedPaths();
 	}
 
-	const file = app.vault.getAbstractFileByPath(sourcePath);
+	onload(): void {
+		const { vault, workspace } = this.plugin.app;
 
-	if (!(file instanceof TFile)) {
-		renderProgressMessage(containerEl, 'Office Flow could not read this note.');
-		return;
-	}
-
-	const currentMarkdown = await app.vault.cachedRead(file);
-	const cards: ProgressCardData[] = [];
-
-	for (const target of targets) {
-		const markdown = await readProgressTargetMarkdown(
-			app,
-			target,
-			sourcePath,
-			currentMarkdown,
+		this.registerEvent(vault.on('modify', (file) => this.onPathChanged(file.path)));
+		this.registerEvent(vault.on('delete', (file) => this.onPathChanged(file.path)));
+		this.registerEvent(
+			vault.on('rename', (file, oldPath) => {
+				this.onPathChanged(oldPath);
+				this.onPathChanged(file.path);
+			}),
 		);
-		cards.push(calculateProgressCard(target, markdown, markdown !== null));
+		this.registerEvent(
+			vault.on('create', () => {
+				if (this.hasMissingNote) {
+					this.scheduleRefresh();
+				}
+			}),
+		);
+		this.registerEvent(
+			workspace.on('editor-change', (_editor, info) => {
+				const path = info.file?.path;
+
+				if (path) {
+					this.onPathChanged(path);
+				}
+			}),
+		);
+
+		void this.refresh(true);
 	}
 
-	renderProgressCards(
-		{ plugin, source, containerEl, sourcePath, restoreTarget: parseRestoreTarget(source) },
-		cards,
-	);
+	onunload(): void {
+		this.clearTimer();
+	}
+
+	/** The badge reports its gesture state so a repaint never interrupts a hold. */
+	setBadgeActive(active: boolean): void {
+		this.badgeActive = active;
+
+		if (!active && this.refreshQueued) {
+			this.scheduleRefresh();
+		}
+	}
+
+	/** Recompute the cards; repaint when something changed, or always when forced. */
+	async refresh(force: boolean): Promise<void> {
+		if (!force && this.badgeActive) {
+			this.refreshQueued = true;
+			return;
+		}
+
+		if (this.refreshing) {
+			this.refreshQueued = true;
+			this.forceQueued = this.forceQueued || force;
+			return;
+		}
+
+		this.refreshing = true;
+		this.refreshQueued = false;
+
+		try {
+			const state = await this.collect();
+			const snapshot = JSON.stringify(state);
+
+			if (force || snapshot !== this.lastSnapshot) {
+				this.lastSnapshot = snapshot;
+				this.badgeActive = false;
+				this.paint(state);
+			}
+		} finally {
+			this.refreshing = false;
+
+			if (this.refreshQueued) {
+				const queuedForce = this.forceQueued;
+				this.refreshQueued = false;
+				this.forceQueued = false;
+
+				if (queuedForce) {
+					void this.refresh(true);
+				} else {
+					this.scheduleRefresh();
+				}
+			}
+		}
+	}
+
+	private onPathChanged(path: string): void {
+		if (this.watchedPaths.has(path)) {
+			this.scheduleRefresh();
+		}
+	}
+
+	private scheduleRefresh(): void {
+		if (this.badgeActive) {
+			this.refreshQueued = true;
+			return;
+		}
+
+		this.refreshQueued = false;
+		this.clearTimer();
+		this.refreshTimer = window.setTimeout(() => {
+			this.refreshTimer = null;
+			void this.refresh(false);
+		}, PROGRESS_REFRESH_DELAY_MS);
+	}
+
+	private clearTimer(): void {
+		if (this.refreshTimer !== null) {
+			window.clearTimeout(this.refreshTimer);
+			this.refreshTimer = null;
+		}
+	}
+
+	private resolveWatchedPaths(): Set<string> {
+		const paths = new Set<string>([this.sourcePath]);
+
+		for (const target of this.targets) {
+			if (target.noteName === null) {
+				continue;
+			}
+
+			const file = this.plugin.app.metadataCache.getFirstLinkpathDest(target.noteName, this.sourcePath);
+
+			if (file) {
+				paths.add(file.path);
+			}
+		}
+
+		return paths;
+	}
+
+	private async collect(): Promise<ProgressBlockState> {
+		const app = this.plugin.app;
+		this.watchedPaths = this.resolveWatchedPaths();
+		const currentMarkdown = await readLatestMarkdown(app, this.sourcePath);
+
+		if (currentMarkdown === null) {
+			this.hasMissingNote = true;
+			return { cards: null };
+		}
+
+		const cards: ProgressCardData[] = [];
+
+		for (const target of this.targets) {
+			const markdown =
+				target.noteName === null
+					? currentMarkdown
+					: await readLinkedMarkdown(app, target.noteName, this.sourcePath);
+			cards.push(calculateProgressCard(target, markdown, markdown !== null));
+		}
+
+		this.hasMissingNote = cards.some((card) => !card.sourceFound);
+		return { cards };
+	}
+
+	private paint(state: ProgressBlockState): void {
+		const { containerEl } = this;
+		containerEl.empty();
+
+		if (this.targets.length === 0) {
+			renderProgressMessage(containerEl, 'Add section names inside this office-progress block.');
+			return;
+		}
+
+		if (state.cards === null) {
+			renderProgressMessage(containerEl, 'Office Flow could not read this note.');
+			return;
+		}
+
+		renderProgressCards(
+			{
+				plugin: this.plugin,
+				block: this,
+				containerEl,
+				sourcePath: this.sourcePath,
+				restoreTarget: this.restoreTarget,
+			},
+			state.cards,
+		);
+	}
 }
 
-async function readProgressTargetMarkdown(
-	app: App,
-	target: ProgressTarget,
-	sourcePath: string,
-	currentMarkdown: string,
-): Promise<string | null> {
-	if (target.noteName === null) {
-		return currentMarkdown;
+/** The freshest text of a note: an open editor if there is one, otherwise the saved file. */
+async function readLatestMarkdown(app: App, path: string): Promise<string | null> {
+	for (const leaf of app.workspace.getLeavesOfType('markdown')) {
+		const view = leaf.view;
+
+		if (view instanceof MarkdownView && view.file?.path === path) {
+			return view.editor.getValue();
+		}
 	}
 
-	const file = app.metadataCache.getFirstLinkpathDest(target.noteName, sourcePath);
+	const file = app.vault.getAbstractFileByPath(path);
+	return file instanceof TFile ? app.vault.cachedRead(file) : null;
+}
 
-	if (!file) {
-		return null;
-	}
-
-	return app.vault.cachedRead(file);
+async function readLinkedMarkdown(app: App, noteName: string, sourcePath: string): Promise<string | null> {
+	const file = app.metadataCache.getFirstLinkpathDest(noteName, sourcePath);
+	return file ? readLatestMarkdown(app, file.path) : null;
 }
 
 function parseProgressTargets(source: string): ProgressTarget[] {
@@ -1678,6 +1876,7 @@ function renderProgressBadge(
 		badge.toggleClass('is-armed', next === 'armed' || next === 'holding');
 		badge.toggleClass('is-holding', next === 'holding');
 		badge.toggleClass('is-busy', next === 'busy');
+		context.block.setBadgeActive(next !== 'percent');
 	};
 
 	const disarm = () => {
@@ -1698,12 +1897,7 @@ function renderProgressBadge(
 		try {
 			const message = await action.run();
 			new Notice(message);
-			await renderOfficeProgressBlock(
-				context.plugin,
-				context.source,
-				context.containerEl,
-				context.sourcePath,
-			);
+			await context.block.refresh(true);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			new Notice(`Office Flow: ${message}`);

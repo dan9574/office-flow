@@ -8,13 +8,24 @@ Office Flow is a small personal Obsidian plugin for faster task notes and a soft
 
 ## Features
 
+- **Shift+Enter for new tasks**: Shift+Enter inserts a task wherever you are; plain Enter on a task only breaks the line.
 - **Task edit mode**: inline buttons after every unfinished task for child tasks, pen notes and top-level tasks, plus a category picker for empty tasks.
-- **Progress cards**: `office-progress` code blocks render a progress card for a section of the current note or of another note.
+- **Progress cards**: `office-progress` code blocks render a progress card for a section of the current note or of another note, and keep it up to date as the tasks change.
 - **Archive and restore**: hold a card's percent badge to move the section's tasks into today's archive file, and hold again there to bring them back.
 - **Home and favorite buttons**: two header actions that open your Home note and a favorite note.
 - **Pink sidebar**: optional soft pink sidebars and ribbons.
 
 Plain Obsidian API, TypeScript and CSS. No external services, no extra libraries.
+
+## Shift+Enter for new tasks
+
+Shift+Enter starts a task wherever you are, without the mouse:
+
+- on an empty line it types `- [ ] `;
+- on a task it adds the next task below, after the task's pen notes, with the same indent;
+- on any other line it adds a `- [ ] ` line below.
+
+Plain Enter on a task line just breaks the line, so you can write under a task without getting another checkbox; on an empty task line it removes the marker, as Obsidian does. Both behaviours belong to the *Shift+Enter for new tasks* setting, which is on by default; switch it off to get Obsidian's usual Enter back. The key is the `Insert task checkbox` command's hotkey and can be changed under **Settings → Hotkeys**.
 
 ## Task edit mode
 
@@ -29,11 +40,9 @@ In editing mode every unfinished task (`- [ ]`) gets small buttons right after t
 | `-` (child tasks only) | a new top-level task (`- [ ] `) |
 | category picker (empty tasks only) | one of four labels as the task text |
 
-Pen notes belong to the task above them, so new tasks are inserted after a task's pen notes, both from the buttons and when you press Enter on the task. Backspace on an empty inserted line removes that line again.
+Pen notes belong to the task above them, so new tasks are inserted after a task's pen notes, both from the buttons and with Shift+Enter on the task. Backspace on an empty inserted line removes that line again.
 
 The four category labels default to Action, Research, Design and Code and can be changed in settings.
-
-**Insert task checkbox** starts a task from anywhere without the mouse: on an empty line it types `- [ ] `; on any other line it adds a `- [ ] ` line below, keeping the indent and skipping a task's pen notes. The command is off by default: turn on *Insert task hotkey* in settings. Its default hotkey is Alt+Enter, which Obsidian also uses for *Follow link under cursor* while the cursor is on a link; change either one under **Settings → Hotkeys** if that gets in the way.
 
 Commands: `Toggle task edit mode`, `Insert child task`, `Insert pen note`, `Insert task checkbox`.
 
@@ -69,9 +78,11 @@ todo:
 ```
 ````
 
-`todo` counts only the `todo` heading; `todo:` counts `todo1`, `todo2` and `todo today` together; `:todo:` also counts `🌸 todo 🔒` and `my todo`. Full-width colons (`：`) work too, and the card shows the name without them. Before 1.2.6 every name behaved like `:todo:`.
+`todo` counts only the `todo` heading; `todo:` counts `todo1`, `todo2` and `todo today` together; `:todo:` also counts `🌸 todo 🔒` and `my todo`. Full-width colons (`：`) work too, and the card shows the name without them. Before 1.3.0 every name behaved like `:todo:`.
 
 The counter counts leaf tasks: a task that has child tasks is a group, not a task. Clicking the alias on a cross-note card opens that note.
+
+Cards keep themselves up to date: when a tracked note changes, the card repaints a moment later, right away for notes open in an editor and as soon as Obsidian saves for the rest.
 
 ## Archive and restore
 
@@ -112,9 +123,9 @@ Turns the left and right sidebars and ribbons a soft pink. Just a toggle.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Task edit mode | on | Show the inline task buttons and the Enter / Backspace helpers. |
+| Shift+Enter for new tasks | on | Shift+Enter inserts a task (the `Insert task checkbox` command); Enter on a task line only breaks the line. |
+| Task edit mode | on | Show the inline task buttons and the Backspace helper. |
 | Category picker | on | Show the category labels on empty tasks. |
-| Insert task hotkey | off | Enable the `Insert task checkbox` command (Alt+Enter by default; change the key under Hotkeys). |
 | Home button | on | Show the Home and heart actions in view headers. |
 | Office progress blocks | on | Render `office-progress` code blocks. |
 | Pink sidebar | on | Apply the pink sidebar style. |
