@@ -33,7 +33,9 @@ Office Flow 是一个小而实用的个人 Obsidian 插件，让任务笔记更�
 
 四个分类标签默认是 Action、Research、Design、Code，可在设置中修改。
 
-命令：`Toggle task edit mode`、`Insert child task`、`Insert pen note`。
+**Insert task checkbox** 命令让你不用鼠标就能在任何位置开一条待办：当前行为空时，直接输入 `- [ ] `；当前行有内容时，在下一行插入 `- [ ] `，保持缩进，并跳过任务的 🖊 笔记行。该命令默认关闭，需要在设置里打开 *Insert task hotkey*。默认快捷键是 Alt+Enter，Obsidian 自带的「Follow link under cursor」在光标位于链接上时也用这个键，如有冲突可在 **设置 → 快捷键** 里改任意一方。
+
+命令：`Toggle task edit mode`、`Insert child task`、`Insert pen note`、`Insert task checkbox`。
 
 ## 进度卡片
 
@@ -56,7 +58,19 @@ To_do
 ```
 ````
 
-章节指标题文字包含给定名称的标题，范围到下一个同级或更高级标题为止。计数只算叶子任务：有子任务的任务是分组，不算任务。点击跨笔记卡片上的别名会打开那篇笔记。
+章节指标题文字与给定名称完全相同（不区分大小写）的标题，范围到下一个同级或更高级标题为止。名称末尾加一个冒号，则改为匹配所有以它开头的标题：
+
+````md
+```office-progress
+todo
+todo:
+[[Home 7_21|Work]] : todo:
+```
+````
+
+`todo` 只统计标题 `todo`；`todo:`（全角 `：` 也可以）会把 `todo1`、`todo2`、`todo 今天` 合在一起统计，卡片上显示的名称不带冒号。1.2.6 之前，名称会匹配所有包含它的标题。
+
+计数只算叶子任务：有子任务的任务是分组，不算任务。点击跨笔记卡片上的别名会打开那篇笔记。
 
 ## 归档与还原
 
@@ -99,6 +113,7 @@ restore: [[study/Everyday_Task]] : To_do
 | --- | --- | --- |
 | Task edit mode | 开 | 显示行内任务按钮和 Enter / Backspace 辅助。 |
 | Category picker | 开 | 在空任务上显示分类标签。 |
+| Insert task hotkey | 关 | 启用 `Insert task checkbox` 命令（默认 Alt+Enter，可在快捷键设置里修改）。 |
 | Home button | 开 | 在视图标题栏显示 Home 和爱心按钮。 |
 | Office progress blocks | 开 | 渲染 `office-progress` 代码块。 |
 | Pink sidebar | 开 | 应用粉色侧边栏样式。 |
@@ -111,14 +126,20 @@ restore: [[study/Everyday_Task]] : To_do
 
 ## 安装
 
+打开 **设置** → **第三方插件** → **浏览**，搜索 **Office Flow** 并安装。之后的新版本会出现在 **第三方插件** → **检查更新** 里。
+
+也可以手动安装：
+
 1. 从最新的 [Release](https://github.com/dan9574/office-flow/releases/latest) 下载 `main.js`、`manifest.json`、`styles.css` 三个文件。
 2. 打开 Obsidian **设置** → **第三方插件** → **已安装插件**，点击 **打开插件文件夹** 图标。
 3. 在这个插件文件夹里新建一个名为 `office-flow` 的文件夹，把三个文件放进去。
 4. 重启 Obsidian，回到 **第三方插件** 设置页并启用 **Office Flow**。
 
-插件上架社区目录后，也可以直接在 **第三方插件** → **浏览** 里搜索安装。
-
 任务按钮需要 Obsidian 的编辑模式（实时预览或源码模式）。进度卡片在阅读模式下也能渲染，也能在其他渲染 Markdown 的插件里显示，例如 Always-on-Top Tasks。
+
+## 反馈与联系
+
+有任何想法、建议或 bug，欢迎写信给作者：danielnaibuluo@gmail.com，也可以在 GitHub 提 issue。我会回复，好的想法可能会变成新功能。
 
 ## 开发
 

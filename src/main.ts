@@ -47,6 +47,7 @@ interface OfficeFlowSettings {
 	homeNote: string;
 	enableTaskEditMode: boolean;
 	enableCategoryPicker: boolean;
+	enableInsertTaskHotkey: boolean;
 	enableHomeButton: boolean;
 	enableOfficeProgressBlocks: boolean;
 	enablePinkSidebar: boolean;
@@ -61,6 +62,7 @@ const DEFAULT_SETTINGS: OfficeFlowSettings = {
 	homeNote: 'Home',
 	enableTaskEditMode: true,
 	enableCategoryPicker: true,
+	enableInsertTaskHotkey: false,
 	enableHomeButton: true,
 	enableOfficeProgressBlocks: true,
 	enablePinkSidebar: true,
@@ -125,6 +127,24 @@ export default class OfficeFlowPlugin extends Plugin {
 			name: 'Insert pen note',
 			editorCallback: (editor: Editor) => {
 				insertLineBelowCurrentTask(editor, INSERTED_NOTE_LINE);
+			},
+		});
+
+		// Opt-in: the setting gates the command so the hotkey stays inert until the user wants it.
+		this.addCommand({
+			id: 'insert-task-checkbox',
+			name: 'Insert task checkbox',
+			hotkeys: [{ modifiers: ['Alt'], key: 'Enter' }],
+			editorCheckCallback: (checking: boolean, editor: Editor) => {
+				if (!this.settings.enableInsertTaskHotkey) {
+					return false;
+				}
+
+				if (!checking) {
+					insertTaskCheckbox(editor);
+				}
+
+				return true;
 			},
 		});
 
@@ -376,6 +396,18 @@ class OfficeFlowSettingTab extends PluginSettingTab {
 					this.plugin.settings.enableCategoryPicker = value;
 					await this.plugin.saveSettings();
 					this.plugin.refreshTaskEditModeExtension();
+				}),
+			);
+
+		new Setting(containerEl)
+			.setName('Insert task hotkey')
+			.setDesc(
+				'Enable the "Insert task checkbox" command: Alt+Enter turns an empty line into "- [ ] " or starts a new task below the current line. Change the key under Settings → Hotkeys.',
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.enableInsertTaskHotkey).onChange(async (value) => {
+					this.plugin.settings.enableInsertTaskHotkey = value;
+					await this.plugin.saveSettings();
 				}),
 			);
 
@@ -935,6 +967,35 @@ function getLastFollowingPenNoteEditorLine(editor: Editor, lineNumber: number): 
 	return lastLineNumber;
 }
 
+/**
+ * "Insert task checkbox" command: an empty line becomes `- [ ] `; any other line gets a new
+ * `- [ ] ` line below it (after a task's pen notes), keeping the current indent.
+ */
+function insertTaskCheckbox(editor: Editor): void {
+	const cursor = editor.getCursor();
+	const currentLine = editor.getLine(cursor.line);
+	const indent = /^[\t ]*/.exec(currentLine)?.[0] ?? '';
+	const taskLine = `${indent}${INSERTED_TOP_LEVEL_TASK_LINE}`;
+
+	if (currentLine.trim() === '') {
+		editor.replaceRange(
+			taskLine,
+			{ line: cursor.line, ch: 0 },
+			{ line: cursor.line, ch: currentLine.length },
+		);
+		editor.setCursor({ line: cursor.line, ch: taskLine.length });
+		return;
+	}
+
+	const insertLine = UNFINISHED_TASK_LINE.test(currentLine)
+		? getLastFollowingPenNoteEditorLine(editor, cursor.line)
+		: cursor.line;
+	const insertLineText = editor.getLine(insertLine);
+
+	editor.replaceRange(`\n${taskLine}`, { line: insertLine, ch: insertLineText.length });
+	editor.setCursor({ line: insertLine + 1, ch: taskLine.length });
+}
+
 interface HeadingRange {
 	name: string;
 	level: number;
@@ -953,16 +1014,22 @@ interface ProgressCounts {
 	total: number;
 }
 
+/** How a section name is compared with heading text. Both modes ignore case. */
+type SectionMatchMode = 'exact' | 'prefix';
+
 interface ProgressTarget {
 	noteName: string | null;
 	noteDisplayName: string | null;
+	/** The name to look for, without the trailing colon that selects prefix matching. */
 	sectionName: string;
+	matchMode: SectionMatchMode;
 	displayName: string;
 }
 
 interface ProgressCardData extends ProgressCounts {
 	sectionName: string;
 	targetSectionName: string;
+	matchMode: SectionMatchMode;
 	noteName: string | null;
 	noteDisplayName: string | null;
 	percent: number;
@@ -1073,7 +1140,7 @@ function parseProgressTargets(source: string): ProgressTarget[] {
 			continue;
 		}
 
-		const key = `${target.noteName ?? 'current'}::${target.sectionName}`.toLowerCase();
+		const key = `${target.noteName ?? 'current'}::${target.matchMode}::${target.sectionName}`.toLowerCase();
 
 		if (seen.has(key)) {
 			continue;
@@ -1094,14 +1161,15 @@ function parseRestoreTarget(source: string): ProgressTarget | null {
 			continue;
 		}
 
-		const target = parseProgressTarget(match[1] ?? '');
+		// Restore lines carry the real heading name, so a trailing colon is part of the name.
+		const target = parseProgressTarget(match[1] ?? '', false);
 		return target && target.noteName !== null ? target : null;
 	}
 
 	return null;
 }
 
-function parseProgressTarget(line: string): ProgressTarget | null {
+function parseProgressTarget(line: string, allowPrefixMarker = true): ProgressTarget | null {
 	const trimmedLine = line.trim();
 
 	if (!trimmedLine) {
@@ -1113,18 +1181,21 @@ function parseProgressTarget(line: string): ProgressTarget | null {
 	const crossNoteMatch = wikiNoteMatch ?? singleNoteMatch;
 
 	if (!crossNoteMatch) {
+		const { sectionName, matchMode } = parseSectionPattern(trimmedLine, allowPrefixMarker);
+
 		return {
 			noteName: null,
 			noteDisplayName: null,
-			sectionName: trimmedLine,
-			displayName: trimmedLine,
+			sectionName,
+			matchMode,
+			displayName: sectionName,
 		};
 	}
 
 	const bracketTarget = wikiNoteMatch ? `[[${crossNoteMatch[1]?.trim() ?? ''}]]` : crossNoteMatch[1]?.trim();
-	const sectionName = crossNoteMatch[2]?.trim();
+	const rawSectionName = crossNoteMatch[2]?.trim();
 
-	if (!bracketTarget || !sectionName) {
+	if (!bracketTarget || !rawSectionName) {
 		return null;
 	}
 
@@ -1134,12 +1205,31 @@ function parseProgressTarget(line: string): ProgressTarget | null {
 		return null;
 	}
 
+	const { sectionName, matchMode } = parseSectionPattern(rawSectionName, allowPrefixMarker);
+
 	return {
 		noteName,
 		noteDisplayName,
 		sectionName,
+		matchMode,
 		displayName: `${noteDisplayName} : ${sectionName}`,
 	};
+}
+
+/** `todo` matches the heading "todo" only; `todo:` (or the full-width `todo：`) matches every heading that starts with "todo". */
+function parseSectionPattern(
+	raw: string,
+	allowPrefixMarker: boolean,
+): { sectionName: string; matchMode: SectionMatchMode } {
+	const trimmed = raw.trim();
+	const prefixMatch = allowPrefixMarker ? /^(.+?)\s*[:：]$/.exec(trimmed) : null;
+	const prefixName = prefixMatch?.[1]?.trim();
+
+	if (prefixName) {
+		return { sectionName: prefixName, matchMode: 'prefix' };
+	}
+
+	return { sectionName: trimmed, matchMode: 'exact' };
 }
 
 function parseProgressNoteTarget(target: string): {
@@ -1173,6 +1263,7 @@ function calculateProgressCard(
 		return {
 			sectionName: target.displayName,
 			targetSectionName: target.sectionName,
+			matchMode: target.matchMode,
 			noteName: target.noteName,
 			noteDisplayName: target.noteDisplayName,
 			completed: 0,
@@ -1186,13 +1277,14 @@ function calculateProgressCard(
 
 	const lines = markdown.split(/\r?\n/);
 	const headings = findHeadings(lines);
-	const ranges = findMatchingHeadingRanges(headings, target.sectionName);
+	const ranges = findMatchingHeadingRanges(headings, target.sectionName, target.matchMode);
 	const counts = countLeafTasksInRanges(lines, ranges);
 	const percent = counts.total === 0 ? 0 : Math.round((counts.completed / counts.total) * 100);
 
 	return {
 		sectionName: target.displayName,
 		targetSectionName: target.sectionName,
+		matchMode: target.matchMode,
 		noteName: target.noteName,
 		noteDisplayName: target.noteDisplayName,
 		completed: counts.completed,
@@ -1268,9 +1360,18 @@ function findHeadings(lines: string[]): HeadingRange[] {
 function findMatchingHeadingRanges(
 	headings: HeadingRange[],
 	sectionName: string,
+	matchMode: SectionMatchMode,
 ): HeadingRange[] {
-	const needle = sectionName.toLowerCase();
-	return headings.filter((heading) => heading.name.toLowerCase().includes(needle));
+	const needle = sectionName.trim().toLowerCase();
+
+	if (!needle) {
+		return [];
+	}
+
+	return headings.filter((heading) => {
+		const name = heading.name.toLowerCase();
+		return matchMode === 'prefix' ? name.startsWith(needle) : name === needle;
+	});
 }
 
 function countLeafTasksInRanges(
@@ -1466,13 +1567,13 @@ function resolveProgressAction(
 
 		return {
 			kind: 'restore',
-			run: () => restoreSection(plugin, sourcePath, card.targetSectionName, restoreTarget),
+			run: () => restoreSection(plugin, sourcePath, card.targetSectionName, card.matchMode, restoreTarget),
 		};
 	}
 
 	return {
 		kind: 'archive',
-		run: () => archiveSection(plugin, sourcePath, card.targetSectionName),
+		run: () => archiveSection(plugin, sourcePath, card.targetSectionName, card.matchMode),
 	};
 }
 
@@ -1671,11 +1772,12 @@ async function archiveSection(
 	plugin: OfficeFlowPlugin,
 	sourcePath: string,
 	sectionName: string,
+	matchMode: SectionMatchMode,
 ): Promise<string> {
 	const app = plugin.app;
 	const sourceFile = getMarkdownFile(app, sourcePath);
 	const sourceLines = splitLines(await app.vault.read(sourceFile));
-	const range = findUniqueHeadingRange(sourceLines, sectionName);
+	const range = findUniqueHeadingRange(sourceLines, sectionName, matchMode);
 	const body = splitSectionBody(sourceLines, range);
 
 	if (body.content.length === 0) {
@@ -1706,7 +1808,7 @@ async function archiveSection(
 
 	await app.vault.process(sourceFile, (content) => {
 		const lines = splitLines(content);
-		const currentRange = findUniqueHeadingRange(lines, sectionName);
+		const currentRange = findUniqueHeadingRange(lines, sectionName, matchMode);
 		const currentBody = splitSectionBody(lines, currentRange);
 		return joinLines([
 			...lines.slice(0, currentRange.startLine + 1),
@@ -1722,12 +1824,13 @@ async function restoreSection(
 	plugin: OfficeFlowPlugin,
 	archivePath: string,
 	sectionName: string,
+	matchMode: SectionMatchMode,
 	target: ProgressTarget,
 ): Promise<string> {
 	const app = plugin.app;
 	const archiveFile = getMarkdownFile(app, archivePath);
 	const archiveLines = splitLines(await app.vault.read(archiveFile));
-	const range = findUniqueHeadingRange(archiveLines, sectionName);
+	const range = findUniqueHeadingRange(archiveLines, sectionName, matchMode);
 	const body = splitSectionBody(archiveLines, range);
 
 	if (body.content.length === 0) {
@@ -1743,13 +1846,13 @@ async function restoreSection(
 
 	await app.vault.process(sourceFile, (content) => {
 		const lines = splitLines(content);
-		const sourceRange = findUniqueHeadingRange(lines, target.sectionName);
+		const sourceRange = findUniqueHeadingRange(lines, target.sectionName, target.matchMode);
 		return joinLines(insertAtSectionEnd(lines, sourceRange, body.content));
 	});
 
 	await app.vault.process(archiveFile, (content) => {
 		const lines = splitLines(content);
-		const currentRange = findUniqueHeadingRange(lines, sectionName);
+		const currentRange = findUniqueHeadingRange(lines, sectionName, matchMode);
 		return joinLines(removeLineRange(lines, currentRange.startLine, currentRange.endLineExclusive));
 	});
 
@@ -1810,12 +1913,15 @@ async function ensureFolder(app: App, folderPath: string): Promise<void> {
 	}
 }
 
-/** Exact heading name wins; otherwise fall back to the card's substring match. Must be unique. */
-function findUniqueHeadingRange(lines: string[], sectionName: string): HeadingRange {
+/** Exact heading name wins; a prefix pattern then falls back to the card's prefix matches. Must be unique. */
+function findUniqueHeadingRange(
+	lines: string[],
+	sectionName: string,
+	matchMode: SectionMatchMode,
+): HeadingRange {
 	const headings = findHeadings(lines);
-	const needle = sectionName.trim().toLowerCase();
-	const exact = headings.filter((heading) => heading.name.toLowerCase() === needle);
-	const matches = exact.length > 0 ? exact : findMatchingHeadingRanges(headings, sectionName);
+	const exact = findMatchingHeadingRanges(headings, sectionName, 'exact');
+	const matches = exact.length > 0 ? exact : findMatchingHeadingRanges(headings, sectionName, matchMode);
 	const [match] = matches;
 
 	if (!match) {
