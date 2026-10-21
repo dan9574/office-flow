@@ -1304,12 +1304,16 @@ class OfficeProgressBlock extends MarkdownRenderChild {
 	}
 }
 
-/** The freshest text of a note: an open editor if there is one, otherwise the saved file. */
+/**
+ * The freshest text of a note: a view in editing mode if one is open, otherwise the saved file.
+ * A view in reading mode does not count: its editor is hidden and lags behind the file, and a
+ * checkbox toggled in reading view is written straight to disk, so the file is the fresh copy.
+ */
 async function readLatestMarkdown(app: App, path: string): Promise<string | null> {
 	for (const leaf of app.workspace.getLeavesOfType('markdown')) {
 		const view = leaf.view;
 
-		if (view instanceof MarkdownView && view.file?.path === path) {
+		if (view instanceof MarkdownView && view.file?.path === path && view.getMode() === 'source') {
 			return view.editor.getValue();
 		}
 	}
