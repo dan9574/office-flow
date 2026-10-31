@@ -11,7 +11,7 @@ Office Flow is a small personal Obsidian plugin for faster task notes and a soft
 - **Shift+Enter for new tasks**: Shift+Enter inserts a task wherever you are; plain Enter on a task only breaks the line.
 - **Task edit mode**: inline buttons after every unfinished task for child tasks, pen notes and top-level tasks, plus a category picker for empty tasks.
 - **Progress cards**: `office-progress` code blocks render a progress card for a section of the current note or of another note, and keep it up to date as the tasks change.
-- **Archive and restore**: hold a card's percent badge to move the section's tasks into today's archive file, and hold again there to bring them back.
+- **Archive and restore**: hold a card's percent badge to move the section's completed tasks into today's archive file, and hold again there to bring them back.
 - **Home and favorite buttons**: two header actions that open your Home note and a favorite note.
 - **Pink sidebar**: optional soft pink sidebars and ribbons.
 
@@ -89,12 +89,14 @@ Cards keep themselves up to date: when a tracked note changes, the card repaints
 A temporary to-do list is most useful when it can be cleared in one gesture but is still kept somewhere. On a card for a section of the current note, the percent badge is that gesture:
 
 1. Click the percent. It turns into an archive icon (it reverts after 5 s, or on a short press).
-2. Press and hold the icon for 2 s. A ring fills up, then everything under the heading (tasks, child tasks, pen notes, other blocks) moves to today's archive file. The heading and its `office-progress` block stay where they are.
+2. Press and hold the icon for 2 s. A ring fills up, then the completed items under the heading move to today's archive file: every top-level task whose leaf tasks are all checked, together with its child tasks and pen notes. Unfinished items and other text stay, and so do the heading and its `office-progress` block. Sub-headings inside the section stay too; a copy of each goes along with the items moved from under it, so the archive keeps the grouping.
 
-Archived sections land in `archive/todo/2026_10_16_temp_todo.md`. Each archived block carries its own card and remembers where it came from:
+The badge offers archiving only while the section has something to move. Turn off *Archive completed tasks only* in the settings to move everything under the heading instead (tasks, child tasks, pen notes, other blocks), as earlier versions did.
+
+Archived sections land in `archive/todo/2026_10_16_temp_todo.md`. A block keeps the level of its source heading, so a `# To_do` section becomes `# 15:32 To_do` with its sub-sections still nested under it; it only goes shallower when the file already holds a shallower block, so blocks never nest inside each other. Each block carries its own card and remembers where it came from:
 
 ````md
-## 15:32 To_do
+# 15:32 To_do
 ```office-progress
 15:32 To_do
 restore: [[study/Everyday_Task]] : To_do
@@ -102,7 +104,7 @@ restore: [[study/Everyday_Task]] : To_do
 - [ ] Music_hw
 ````
 
-Inside the archive folder the badge is blue and works the other way round: hold it to move the block back under its original heading and remove it from the archive file. Notes inside the archive folder are never archived.
+Inside the archive folder the badge is blue and works the other way round: hold it to move the block back under its original heading and remove it from the archive file. Items go back to the top of the sub-heading they came from when the note still has it, ahead of the unfinished ones; a sub-section the note no longer has is appended at the end of the section. Notes inside the archive folder are never archived.
 
 Both actions need the heading to match exactly one heading in the note; otherwise you get a notice and nothing is written. The archive file is written before the source is trimmed, so a failed step never loses tasks.
 
@@ -131,6 +133,7 @@ Turns the left and right sidebars and ribbons a soft pink. Just a toggle.
 | Pink sidebar | on | Apply the pink sidebar style. |
 | Home note | `Home` | Note opened by the Home action. |
 | Favorite note | empty | Note opened by the heart action. |
+| Archive completed tasks only | on | Holding the badge moves only the items whose tasks are all done. Off moves everything under the heading. |
 | Archive folder | `archive/todo` | Where archived sections go. Cards inside it show the restore control. |
 | Archive date format | `YYYY_MM_DD` | Moment.js format for the start of the archive file name. |
 | Archive file name suffix | `temp_todo` | Literal text added after the date with an underscore. |
