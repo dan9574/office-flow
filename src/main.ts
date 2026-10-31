@@ -48,6 +48,8 @@ const ARCHIVE_ARM_TIMEOUT_MS = 5000;
 /** Progress cards repaint this long after the last change to a tracked note. */
 const PROGRESS_REFRESH_DELAY_MS = 300;
 const OFFICE_PROGRESS_FENCE_LINE = /^\s*(?:```+|~~~+)\s*office-progress\s*$/i;
+const HEADING_LINE = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+const MAX_HEADING_LEVEL = 6;
 const RESTORE_TARGET_LINE = /^restore\s*:\s*(.+)$/i;
 
 interface OfficeFlowSettings {
@@ -63,6 +65,8 @@ interface OfficeFlowSettings {
 	archiveFolder: string;
 	archiveDateFormat: string;
 	archiveFileSuffix: string;
+	/** Archive only the items whose leaf tasks are all done; off moves everything under the heading. */
+	archiveCompletedOnly: boolean;
 }
 
 const DEFAULT_SETTINGS: OfficeFlowSettings = {
@@ -78,6 +82,7 @@ const DEFAULT_SETTINGS: OfficeFlowSettings = {
 	archiveFolder: DEFAULT_ARCHIVE_FOLDER,
 	archiveDateFormat: DEFAULT_ARCHIVE_DATE_FORMAT,
 	archiveFileSuffix: DEFAULT_ARCHIVE_FILE_SUFFIX,
+	archiveCompletedOnly: true,
 };
 
 interface OfficeFlowViewActions {
@@ -89,6 +94,8 @@ export default class OfficeFlowPlugin extends Plugin {
 	settings!: OfficeFlowSettings;
 	private taskEditModeEnabled = false;
 	private readonly editorExtensions: Extension[] = [];
+	/** Live office-progress blocks, so a settings change can repaint them at once. */
+	readonly progressBlocks = new Set<OfficeProgressBlock>();
 
 	async onload() {
 		await this.loadSettings();
@@ -361,6 +368,17 @@ export default class OfficeFlowPlugin extends Plugin {
 		});
 	}
 
+	refreshProgressBlocks(): void {
+		for (const block of this.progressBlocks) {
+			void block.refresh(true);
+		}
+	}
+
+	/** Cards inside the archive folder restore whole blocks, so the completed-only rule applies outside it only. */
+	archivesCompletedOnly(sourcePath: string): boolean {
+		return this.settings.archiveCompletedOnly && !isPathInFolder(sourcePath, this.settings.archiveFolder);
+	}
+
 	refreshTaskEditModeExtension(): void {
 		this.editorExtensions.length = 0;
 
@@ -483,6 +501,19 @@ class OfficeFlowSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl).setName('Archive').setHeading();
+
+		new Setting(containerEl)
+			.setName('Archive completed tasks only')
+			.setDesc(
+				'Move only the items whose tasks are all done, with their subtasks and pen notes; unfinished items and other text stay under the heading. Off: archive everything under the heading.',
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.archiveCompletedOnly).onChange(async (value) => {
+					this.plugin.settings.archiveCompletedOnly = value;
+					await this.plugin.saveSettings();
+					this.plugin.refreshProgressBlocks();
+				}),
+			);
 
 		new Setting(containerEl)
 			.setName('Archive folder')
@@ -1059,7 +1090,8 @@ interface ProgressCardData extends ProgressCounts {
 	percent: number;
 	found: boolean;
 	sourceFound: boolean;
-	hasContent: boolean;
+	/** The section holds something the badge could archive (or restore) right now. */
+	hasArchivable: boolean;
 }
 
 interface SectionBody {
@@ -1067,6 +1099,27 @@ interface SectionBody {
 	kept: string[];
 	/** Everything else under the heading, trimmed of surrounding blank lines. */
 	content: string[];
+}
+
+interface ArchiveSelection {
+	/** Lines that move to the archive file, trimmed of surrounding blank lines. */
+	archived: string[];
+	/** Lines that stay under the heading, in their original order. */
+	remaining: string[];
+}
+
+interface SectionBlock {
+	/** kept: an office-progress code block; heading: a sub-heading line; item: a top-level item. */
+	kind: 'kept' | 'heading' | 'item';
+	/** Heading blocks only: the level of the heading line. */
+	level: number;
+	lines: string[];
+}
+
+interface RestoredPiece {
+	/** The sub-heading the piece starts with, or null for the lines before any sub-heading. */
+	name: string | null;
+	lines: string[];
 }
 
 interface ProgressBlockContext {
@@ -1124,6 +1177,7 @@ class OfficeProgressBlock extends MarkdownRenderChild {
 
 	onload(): void {
 		const { vault, workspace } = this.plugin.app;
+		this.plugin.progressBlocks.add(this);
 
 		this.registerEvent(vault.on('modify', (file) => this.onPathChanged(file.path)));
 		this.registerEvent(vault.on('delete', (file) => this.onPathChanged(file.path)));
@@ -1154,6 +1208,7 @@ class OfficeProgressBlock extends MarkdownRenderChild {
 	}
 
 	onunload(): void {
+		this.plugin.progressBlocks.delete(this);
 		this.clearTimer();
 	}
 
@@ -1264,13 +1319,14 @@ class OfficeProgressBlock extends MarkdownRenderChild {
 		}
 
 		const cards: ProgressCardData[] = [];
+		const completedOnly = this.plugin.archivesCompletedOnly(this.sourcePath);
 
 		for (const target of this.targets) {
 			const markdown =
 				target.noteName === null
 					? currentMarkdown
 					: await readLinkedMarkdown(app, target.noteName, this.sourcePath);
-			cards.push(calculateProgressCard(target, markdown, markdown !== null));
+			cards.push(calculateProgressCard(target, markdown, markdown !== null, completedOnly));
 		}
 
 		this.hasMissingNote = cards.some((card) => !card.sourceFound);
@@ -1471,6 +1527,7 @@ function calculateProgressCard(
 	target: ProgressTarget,
 	markdown: string | null,
 	sourceFound: boolean,
+	completedOnly: boolean,
 ): ProgressCardData {
 	if (markdown === null) {
 		return {
@@ -1484,7 +1541,7 @@ function calculateProgressCard(
 			percent: 0,
 			found: false,
 			sourceFound,
-			hasContent: false,
+			hasArchivable: false,
 		};
 	}
 
@@ -1505,7 +1562,9 @@ function calculateProgressCard(
 		percent,
 		found: ranges.length > 0,
 		sourceFound,
-		hasContent: ranges.some((range) => splitSectionBody(lines, range).content.length > 0),
+		hasArchivable: ranges.some(
+			(range) => partitionSectionBody(lines, range, completedOnly).archived.length > 0,
+		),
 	};
 }
 
@@ -1525,7 +1584,7 @@ function findHeadings(lines: string[]): HeadingRange[] {
 			continue;
 		}
 
-		const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+		const match = HEADING_LINE.exec(line);
 
 		if (!match) {
 			continue;
@@ -1599,28 +1658,37 @@ function countLeafTasksInRanges(
 	lines: string[],
 	ranges: HeadingRange[],
 ): ProgressCounts {
+	const counts: ProgressCounts = { completed: 0, total: 0 };
+
+	for (const range of ranges) {
+		const rangeCounts = countLeafTasks(collectTasksInRange(lines, range));
+		counts.completed += rangeCounts.completed;
+		counts.total += rangeCounts.total;
+	}
+
+	return counts;
+}
+
+/** Leaf tasks only: a top-level task with subtasks is a group, not a task. */
+function countLeafTasks(tasks: ParsedTaskLine[]): ProgressCounts {
 	let completed = 0;
 	let total = 0;
 
-	for (const range of ranges) {
-		const tasks = collectTasksInRange(lines, range);
+	for (let index = 0; index < tasks.length; index++) {
+		const task = tasks[index];
 
-		for (let index = 0; index < tasks.length; index++) {
-			const task = tasks[index];
+		if (!task) {
+			continue;
+		}
 
-			if (!task) {
-				continue;
-			}
+		if (task.indentLevel === 0 && hasChildTask(tasks, index)) {
+			continue;
+		}
 
-			if (task.indentLevel === 0 && hasChildTask(tasks, index)) {
-				continue;
-			}
+		total++;
 
-			total++;
-
-			if (task.checked) {
-				completed++;
-			}
+		if (task.checked) {
+			completed++;
 		}
 	}
 
@@ -1628,10 +1696,14 @@ function countLeafTasksInRanges(
 }
 
 function collectTasksInRange(lines: string[], range: HeadingRange): ParsedTaskLine[] {
+	return collectTasksInLines(lines, range.startLine + 1, range.endLineExclusive);
+}
+
+function collectTasksInLines(lines: string[], start: number, endExclusive: number): ParsedTaskLine[] {
 	const tasks: ParsedTaskLine[] = [];
 	let inFence = false;
 
-	for (let index = range.startLine + 1; index < range.endLineExclusive; index++) {
+	for (let index = start; index < endExclusive; index++) {
 		const line = lines[index] ?? '';
 
 		if (isFenceLine(line)) {
@@ -1775,7 +1847,7 @@ function resolveProgressAction(
 	context: ProgressBlockContext,
 	card: ProgressCardData,
 ): ProgressAction | null {
-	if (card.noteName !== null || !card.found || !card.hasContent) {
+	if (card.noteName !== null || !card.found || !card.hasArchivable) {
 		return null;
 	}
 
@@ -1995,10 +2067,15 @@ async function archiveSection(
 	const sourceFile = getMarkdownFile(app, sourcePath);
 	const sourceLines = splitLines(await app.vault.read(sourceFile));
 	const range = findUniqueHeadingRange(sourceLines, sectionName, matchMode);
-	const body = splitSectionBody(sourceLines, range);
+	const completedOnly = plugin.archivesCompletedOnly(sourcePath);
+	const body = partitionSectionBody(sourceLines, range, completedOnly);
 
-	if (body.content.length === 0) {
-		throw new OfficeFlowActionError(`Nothing to archive under "${range.name}".`);
+	if (body.archived.length === 0) {
+		throw new OfficeFlowActionError(
+			completedOnly
+				? `No completed tasks to archive under "${range.name}".`
+				: `Nothing to archive under "${range.name}".`,
+		);
 	}
 
 	const folder = plugin.settings.archiveFolder || DEFAULT_ARCHIVE_FOLDER;
@@ -2012,13 +2089,14 @@ async function archiveSection(
 	await app.vault.process(targetFile, (content) => {
 		const lines = splitLines(content);
 		const archiveHeading = pickArchiveHeadingName(lines, headingName, stamp);
+		const level = pickArchiveHeadingLevel(lines, range.level);
 		const block = [
-			`## ${archiveHeading}`,
+			`${'#'.repeat(level)} ${archiveHeading}`,
 			'```office-progress',
 			archiveHeading,
 			`restore: [[${sourceLink}]] : ${headingName}`,
 			'```',
-			...body.content,
+			...shiftHeadingLevels(body.archived, level - range.level),
 		];
 		return joinLines(appendBlock(lines, block));
 	});
@@ -2026,15 +2104,15 @@ async function archiveSection(
 	await app.vault.process(sourceFile, (content) => {
 		const lines = splitLines(content);
 		const currentRange = findUniqueHeadingRange(lines, sectionName, matchMode);
-		const currentBody = splitSectionBody(lines, currentRange);
+		const currentBody = partitionSectionBody(lines, currentRange, completedOnly);
 		return joinLines([
 			...lines.slice(0, currentRange.startLine + 1),
-			...currentBody.kept,
+			...currentBody.remaining,
 			...ensureLeadingBlankLine(lines.slice(currentRange.endLineExclusive)),
 		]);
 	});
 
-	return `Archived ${describeTaskCount(body.content)} from "${headingName}" to ${targetPath}.`;
+	return `Archived ${describeTaskCount(body.archived)} from "${headingName}" to ${targetPath}.`;
 }
 
 async function restoreSection(
@@ -2064,7 +2142,8 @@ async function restoreSection(
 	await app.vault.process(sourceFile, (content) => {
 		const lines = splitLines(content);
 		const sourceRange = findUniqueHeadingRange(lines, target.sectionName, target.matchMode);
-		return joinLines(insertAtSectionEnd(lines, sourceRange, body.content));
+		const restored = shiftHeadingLevels(body.content, sourceRange.level - range.level);
+		return joinLines(restoreIntoSection(lines, sourceRange, restored));
 	});
 
 	await app.vault.process(archiveFile, (content) => {
@@ -2183,6 +2262,232 @@ function splitSectionBody(lines: string[], range: HeadingRange): SectionBody {
 	return { kept, content: trimBlankLines(content) };
 }
 
+/**
+ * Splits the section body into the lines that move to the archive and the lines that stay, in
+ * their original order. The office-progress code block(s) always stay. An item is a non-indented
+ * line with the indented and blank lines after it (subtasks, pen notes, a fenced block). With
+ * completedOnly, an item moves only when it holds tasks and all of its leaf tasks are checked;
+ * a sub-heading then stays in the note and is copied into the archive above the items that moved
+ * from under it. Without completedOnly everything but the office-progress block(s) moves.
+ */
+function partitionSectionBody(
+	lines: string[],
+	range: HeadingRange,
+	completedOnly: boolean,
+): ArchiveSelection {
+	const blocks = splitSectionBlocks(lines, range);
+	const moves = blocks.map(
+		(block) => block.kind === 'item' && (!completedOnly || isCompletedItem(block.lines)),
+	);
+
+	for (let index = 0; index < blocks.length; index++) {
+		if (blocks[index]?.kind === 'heading') {
+			moves[index] = completedOnly ? hasMovingItemBelow(blocks, moves, index) : true;
+		}
+	}
+
+	const archived: string[] = [];
+	const remaining: string[] = [];
+
+	blocks.forEach((block, index) => {
+		const copied = completedOnly && block.kind === 'heading';
+
+		if (moves[index]) {
+			archived.push(...block.lines);
+		}
+
+		if (!moves[index] || copied) {
+			remaining.push(...block.lines);
+		}
+	});
+
+	return { archived: trimBlankLines(archived), remaining: trimTrailingBlankLines(remaining) };
+}
+
+function splitSectionBlocks(lines: string[], range: HeadingRange): SectionBlock[] {
+	const blocks: SectionBlock[] = [];
+	let fence: 'progress' | 'other' | null = null;
+
+	const lastBlock = (): SectionBlock => {
+		let block = blocks[blocks.length - 1];
+
+		if (!block) {
+			block = { kind: 'item', level: 0, lines: [] };
+			blocks.push(block);
+		}
+
+		return block;
+	};
+
+	for (let index = range.startLine + 1; index < range.endLineExclusive; index++) {
+		const line = lines[index] ?? '';
+
+		if (fence !== null) {
+			lastBlock().lines.push(line);
+
+			if (isFenceLine(line)) {
+				fence = null;
+			}
+
+			continue;
+		}
+
+		if (isFenceLine(line)) {
+			fence = OFFICE_PROGRESS_FENCE_LINE.test(line) ? 'progress' : 'other';
+		}
+
+		const headingLevel = getHeadingLevel(line);
+		const startsItem = line.trim() !== '' && !/^[\t ]/.test(line);
+
+		if (fence === 'progress') {
+			blocks.push({ kind: 'kept', level: 0, lines: [] });
+		} else if (headingLevel > 0) {
+			blocks.push({ kind: 'heading', level: headingLevel, lines: [] });
+		} else if (startsItem) {
+			blocks.push({ kind: 'item', level: 0, lines: [] });
+		}
+
+		lastBlock().lines.push(line);
+	}
+
+	return blocks;
+}
+
+/** Whether an item under this sub-heading (before the next heading of the same or a higher level) moves. */
+function hasMovingItemBelow(blocks: SectionBlock[], moves: boolean[], headingIndex: number): boolean {
+	const heading = blocks[headingIndex];
+
+	if (!heading) {
+		return false;
+	}
+
+	for (let index = headingIndex + 1; index < blocks.length; index++) {
+		const block = blocks[index];
+
+		if (!block) {
+			continue;
+		}
+
+		if (block.kind === 'heading' && block.level <= heading.level) {
+			return false;
+		}
+
+		if (block.kind === 'item' && moves[index]) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/** True when the item holds at least one task and every leaf task in it is checked. */
+function isCompletedItem(lines: string[]): boolean {
+	const counts = countLeafTasks(collectTasksInLines(lines, 0, lines.length));
+	return counts.total > 0 && counts.completed === counts.total;
+}
+
+function getHeadingLevel(line: string): number {
+	return HEADING_LINE.exec(line)?.[1]?.length ?? 0;
+}
+
+/** Moves every heading outside code fences by delta levels, kept within 1 to 6. */
+function shiftHeadingLevels(lines: string[], delta: number): string[] {
+	if (delta === 0) {
+		return lines;
+	}
+
+	let inFence = false;
+
+	return lines.map((line) => {
+		if (isFenceLine(line)) {
+			inFence = !inFence;
+			return line;
+		}
+
+		const match = inFence ? null : /^(#{1,6})(\s+\S.*)$/.exec(line);
+
+		if (!match || match[1] === undefined || match[2] === undefined) {
+			return line;
+		}
+
+		const level = Math.min(MAX_HEADING_LEVEL, Math.max(1, match[1].length + delta));
+		return `${'#'.repeat(level)}${match[2]}`;
+	});
+}
+
+/**
+ * An archived block keeps the level of its source heading, so its sub-sections stay nested.
+ * It only goes shallower when the archive file already holds a shallower block, which would
+ * otherwise swallow it; the block's sub-headings are shifted along and shifted back on restore.
+ */
+function pickArchiveHeadingLevel(lines: string[], sourceLevel: number): number {
+	const levels = findHeadings(lines).map((heading) => heading.level);
+	return levels.length > 0 ? Math.min(sourceLevel, ...levels) : sourceLevel;
+}
+
+/**
+ * Puts restored lines back under the heading, ahead of what is still there: a sub-section goes
+ * to the top of the same-named sub-section when the note still has one, lines before any
+ * sub-heading go to the top of the section, and a sub-section the note no longer has is
+ * appended at the end of the section.
+ */
+function restoreIntoSection(lines: string[], section: HeadingRange, content: string[]): string[] {
+	let result = lines;
+
+	for (const piece of splitRestoredPieces(content)) {
+		const current = findHeadings(result).find((heading) => heading.startLine === section.startLine) ?? section;
+		const subheadings = findHeadings(result).filter(
+			(heading) => heading.startLine > current.startLine && heading.startLine < current.endLineExclusive,
+		);
+
+		if (piece.name === null) {
+			result = insertAtSectionStart(result, current, trimBlankLines(piece.lines));
+			continue;
+		}
+
+		const needle = piece.name.toLowerCase();
+		const existing = subheadings.find((heading) => heading.name.toLowerCase() === needle);
+
+		if (!existing) {
+			result = insertAtSectionEnd(result, current, ['', ...trimBlankLines(piece.lines)]);
+			continue;
+		}
+
+		const body = trimBlankLines(piece.lines.slice(1));
+
+		if (body.length > 0) {
+			result = insertAtSectionStart(result, existing, body);
+		}
+	}
+
+	return result;
+}
+
+/** Cuts restored content at its shallowest sub-headings; lines before the first one form a piece of their own. */
+function splitRestoredPieces(content: string[]): RestoredPiece[] {
+	const headings = findHeadings(content);
+
+	if (headings.length === 0) {
+		return [{ name: null, lines: content }];
+	}
+
+	const topLevel = Math.min(...headings.map((heading) => heading.level));
+	const tops = headings.filter((heading) => heading.level === topLevel);
+	const pieces: RestoredPiece[] = [];
+	const first = tops[0];
+
+	if (first && first.startLine > 0) {
+		pieces.push({ name: null, lines: content.slice(0, first.startLine) });
+	}
+
+	tops.forEach((heading, index) => {
+		const end = tops[index + 1]?.startLine ?? content.length;
+		pieces.push({ name: heading.name, lines: content.slice(heading.startLine, end) });
+	});
+
+	return pieces;
+}
+
 /** Only the date part goes through moment; the suffix is literal text. */
 function buildArchiveFileName(settings: OfficeFlowSettings, stamp: moment.Moment): string {
 	const datePart = stamp.format(settings.archiveDateFormat || DEFAULT_ARCHIVE_DATE_FORMAT);
@@ -2229,6 +2534,44 @@ function insertAtSectionEnd(lines: string[], range: HeadingRange, content: strin
 		...content,
 		...ensureLeadingBlankLine(lines.slice(insertAt)),
 	];
+}
+
+/** Inserts right after the heading, past blank lines and an office-progress block that open the section. */
+function insertAtSectionStart(lines: string[], range: HeadingRange, content: string[]): string[] {
+	let insertAt = range.startLine + 1;
+	let inProgressBlock = false;
+
+	for (let index = range.startLine + 1; index < range.endLineExclusive; index++) {
+		const line = lines[index] ?? '';
+
+		if (inProgressBlock) {
+			insertAt = index + 1;
+
+			if (isFenceLine(line)) {
+				inProgressBlock = false;
+			}
+
+			continue;
+		}
+
+		if (line.trim() === '') {
+			insertAt = index + 1;
+			continue;
+		}
+
+		if (OFFICE_PROGRESS_FENCE_LINE.test(line)) {
+			inProgressBlock = true;
+			insertAt = index + 1;
+			continue;
+		}
+
+		break;
+	}
+
+	const rest = lines.slice(insertAt);
+	const nextIsHeading = getHeadingLevel(rest[0] ?? '') > 0;
+
+	return [...lines.slice(0, insertAt), ...content, ...(nextIsHeading ? ensureLeadingBlankLine(rest) : rest)];
 }
 
 function removeLineRange(lines: string[], start: number, endExclusive: number): string[] {
